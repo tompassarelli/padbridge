@@ -288,6 +288,21 @@ pub fn smashcraft_bindings() -> Vec<Binding> {
     ]
 }
 
+/// Smashcraft's fighter, stage and results menus: the left stick moves the
+/// pointer, as a hand cursor does in Smash, and the face buttons click.
+pub fn smashcraft_menu_bindings() -> Vec<Binding> {
+    use Control::*;
+    vec![
+        bind(LeftUp, "Move the pointer", Press::Pointer),
+        bind(LeftDown, "Move the pointer", Press::Pointer),
+        bind(LeftLeft, "Move the pointer", Press::Pointer),
+        bind(LeftRight, "Move the pointer", Press::Pointer),
+        bind(A, "Choose", Press::LeftClick),
+        bind(B, "Back", Press::RightClick),
+        bind(Start, "Start the match", key("y")),
+    ]
+}
+
 /// Defaults for melee and any map: camera on the left stick, pointer on the
 /// right, select and command on A and B, the command card's top row on X, Y
 /// and the triggers, control groups on the bumpers and the pad.

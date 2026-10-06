@@ -1,8 +1,11 @@
-//! The Any map profile's delivery: the pad's state through
-//! [`model::any_map::Mapper`] into key, click and pointer output, only while
-//! Warcraft III's window has focus. Losing focus releases everything held, and
-//! nothing is pressed again until the pad returns to neutral. Output goes
-//! through XTEST on the game's X11 display (enigo).
+//! Pad-driven desktop output: the Any map profile (the pad's state through
+//! [`model::any_map::Mapper`] into keys, clicks and pointer motion) and the
+//! Smashcraft menu pointer (the left stick moves the pointer with a Smash-like
+//! curve, A and B click). Output happens only while Warcraft III's window has
+//! focus; losing focus releases everything held, and nothing is pressed again
+//! until the pad returns to neutral. Keys go through XTEST on the game's X11
+//! display (enigo); the pointer and clicks through the compositor's virtual
+//! pointer (pointer.rs).
 
 use crate::model::{
     self, Binding, InputView,
@@ -26,18 +29,67 @@ use std::{
 pub trait Output {
     fn key(&mut self, name: &str, down: bool) -> Result<(), String>;
     fn click(&mut self, right: bool, down: bool) -> Result<(), String>;
-    fn pointer(&mut self, dx: i32, dy: i32) -> Result<(), String>;
+    /// Relative motion in logical pixels.
+    fn pointer(&mut self, dx: f64, dy: f64) -> Result<(), String>;
+}
+
+/// The menu pointer's feel: a small radial deadzone, then speed rising with
+/// deflection to `full_speed` (logical pixels a second) at full tilt.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MenuCurve {
+    pub full_speed: f64,
+}
+
+/// Deflection (of full scale) below which the stick rests.
+pub const MENU_DEADZONE: f64 = 0.12;
+/// Speed grows with deflection to this power: fine aim near the centre.
+pub const MENU_ACCELERATION: f64 = 1.7;
+/// Full-tilt speed in game-window heights a second. The fighter grid is 0.8
+/// of the window's height wide (selectionGrid.ts: 0.48 of the 0.6-high UI), so
+/// full tilt crosses it in 0.8 / 1.15 = 0.7 s.
+pub const MENU_HEIGHTS_PER_SECOND: f64 = 1.15;
+
+impl MenuCurve {
+    pub fn for_window_height(height: f64) -> Self {
+        Self { full_speed: height * MENU_HEIGHTS_PER_SECOND }
+    }
+
+    /// Pointer velocity for a stick position (SDL axes, y down positive).
+    pub fn velocity(&self, [x, y]: [i16; 2]) -> (f64, f64) {
+        let (x, y) = (f64::from(x) / 32767.0, f64::from(y) / 32767.0);
+        let length = x.hypot(y);
+        if length <= MENU_DEADZONE {
+            return (0.0, 0.0);
+        }
+        let tilt = ((length.min(1.0) - MENU_DEADZONE) / (1.0 - MENU_DEADZONE)).powf(MENU_ACCELERATION);
+        let speed = self.full_speed * tilt / length;
+        (x * speed, y * speed)
+    }
+}
+
+/// The menu pointer's clicks (model::smashcraft_menu_bindings); the stick is
+/// the curve's, and the helper keeps Start.
+pub fn menu_bindings() -> Vec<Binding> {
+    model::smashcraft_menu_bindings().into_iter()
+        .filter(|binding| matches!(binding.press, model::Press::LeftClick | model::Press::RightClick))
+        .collect()
 }
 
 /// Turns pad states into output; no I/O of its own.
 pub struct Driver {
     mapper: Mapper,
     focused: bool,
+    menu: Option<MenuCurve>,
 }
 
 impl Driver {
     pub fn new(bindings: Vec<Binding>) -> Self {
-        Self { mapper: Mapper::new(bindings), focused: false }
+        Self { mapper: Mapper::new(bindings), focused: false, menu: None }
+    }
+
+    /// The menu pointer: the left stick moves the pointer by `curve`, A and B click.
+    pub fn menu(curve: MenuCurve) -> Self {
+        Self { mapper: Mapper::new(menu_bindings()), focused: false, menu: Some(curve) }
     }
 
     fn deliver(events: Vec<Event>, out: &mut dyn Output) -> Result<(), String> {
@@ -68,8 +120,17 @@ impl Driver {
         self.focused = true;
         Self::deliver(self.mapper.update(input), out)?;
         if seconds > 0.0 {
-            let (dx, dy) = self.mapper.pointer(input, seconds);
-            if (dx, dy) != (0, 0) {
+            let (dx, dy) = match self.menu {
+                Some(curve) => {
+                    let (vx, vy) = curve.velocity(input.left);
+                    (vx * f64::from(seconds), vy * f64::from(seconds))
+                }
+                None => {
+                    let (dx, dy) = self.mapper.pointer(input, seconds);
+                    (f64::from(dx), f64::from(dy))
+                }
+            };
+            if (dx, dy) != (0.0, 0.0) {
                 out.pointer(dx, dy)?;
             }
         }
@@ -88,13 +149,20 @@ impl Driver {
     }
 }
 
-/// XTEST output on an X11 display.
-pub struct XOutput(enigo::Enigo);
+/// Keys through XTEST on an X11 display; the pointer and clicks through the
+/// compositor's virtual pointer.
+pub struct DesktopOutput {
+    keys: enigo::Enigo,
+    pointer: super::pointer::VirtualPointer,
+}
 
-impl XOutput {
+impl DesktopOutput {
     pub fn new(display: &str) -> Result<Self, String> {
         let settings = enigo::Settings { x11_display: Some(display.to_owned()), release_keys_when_dropped: true, ..enigo::Settings::default() };
-        enigo::Enigo::new(&settings).map(Self).map_err(|e| e.to_string())
+        Ok(Self {
+            keys: enigo::Enigo::new(&settings).map_err(|e| e.to_string())?,
+            pointer: super::pointer::VirtualPointer::new()?,
+        })
     }
 }
 
@@ -121,23 +189,34 @@ pub fn key_of(name: &str) -> Option<enigo::Key> {
     })
 }
 
-impl Output for XOutput {
+impl Output for DesktopOutput {
     fn key(&mut self, name: &str, down: bool) -> Result<(), String> {
         use enigo::Keyboard;
         let key = key_of(name).ok_or_else(|| format!("unknown key {name:?}"))?;
-        self.0.key(key, if down { enigo::Direction::Press } else { enigo::Direction::Release }).map_err(|e| e.to_string())
+        self.keys.key(key, if down { enigo::Direction::Press } else { enigo::Direction::Release }).map_err(|e| e.to_string())
     }
 
     fn click(&mut self, right: bool, down: bool) -> Result<(), String> {
-        use enigo::Mouse;
-        let button = if right { enigo::Button::Right } else { enigo::Button::Left };
-        self.0.button(button, if down { enigo::Direction::Press } else { enigo::Direction::Release }).map_err(|e| e.to_string())
+        self.pointer.button(right, down)
     }
 
-    fn pointer(&mut self, dx: i32, dy: i32) -> Result<(), String> {
-        use enigo::Mouse;
-        self.0.move_mouse(dx, dy, enigo::Coordinate::Rel).map_err(|e| e.to_string())
+    fn pointer(&mut self, dx: f64, dy: f64) -> Result<(), String> {
+        self.pointer.motion(dx, dy)
     }
+}
+
+/// The game window's height in logical pixels, as niri lays it out.
+pub fn niri_window_height(socket: &Path, window: u64) -> Option<f64> {
+    let mut stream = UnixStream::connect(socket).ok()?;
+    stream.set_read_timeout(Some(Duration::from_millis(200))).ok()?;
+    writeln!(stream, "\"Windows\"").ok()?;
+    stream.shutdown(std::net::Shutdown::Write).ok()?;
+    let mut reply = String::new();
+    BufReader::new(stream).read_line(&mut reply).ok()?;
+    let parsed: Value = serde_json::from_str(&reply).ok()?;
+    parsed.pointer("/Ok/Windows")?.as_array()?.iter()
+        .find(|entry| entry.get("id").and_then(Value::as_u64) == Some(window))?
+        .pointer("/layout/window_size/1")?.as_f64()
 }
 
 /// Whether niri's focused window is `window`; any failure reads as not focused.
@@ -156,7 +235,15 @@ pub fn niri_focused(socket: &Path, window: u64) -> bool {
     ask().unwrap_or(false)
 }
 
-/// What the running profile is fed.
+/// What the output does with the pad.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Mode {
+    AnyMap(Vec<Binding>),
+    /// Smashcraft's menus: pointer and clicks only.
+    Menu,
+}
+
+/// What the running output is fed.
 pub enum Feed {
     Input(InputView),
     Bindings(Vec<Binding>),
@@ -176,16 +263,22 @@ const FOCUS_EVERY: Duration = Duration::from_millis(50);
 
 /// Runs the profile for `window` until `stop` or the feed ends, releasing what
 /// it holds at the end; `focused` mirrors the game window's focus.
-pub fn spawn(window: Window, bindings: Vec<Binding>, feed: mpsc::Receiver<Feed>, stop: Arc<AtomicBool>, focused: Arc<AtomicBool>) -> thread::JoinHandle<()> {
+pub fn spawn(window: Window, mode: Mode, feed: mpsc::Receiver<Feed>, stop: Arc<AtomicBool>, focused: Arc<AtomicBool>) -> thread::JoinHandle<()> {
     thread::spawn(move || {
-        let mut out = match XOutput::new(&window.display) {
+        let mut out = match DesktopOutput::new(&window.display) {
             Ok(out) => out,
             Err(error) => {
-                eprintln!("service: Any map output on {} failed: {error}", window.display);
+                eprintln!("service: pad output on {} failed: {error}", window.display);
                 return;
             }
         };
-        let mut driver = Driver::new(bindings);
+        let mut driver = match mode {
+            Mode::AnyMap(bindings) => Driver::new(bindings),
+            Mode::Menu => {
+                let height = niri_window_height(&window.niri_socket, window.niri_window).unwrap_or(1440.0);
+                Driver::menu(MenuCurve::for_window_height(height))
+            }
+        };
         let mut input = InputView::default();
         let (mut checked, mut is_focused) = (Instant::now() - FOCUS_EVERY, false);
         let mut moved = Instant::now();
@@ -201,7 +294,7 @@ pub fn spawn(window: Window, bindings: Vec<Binding>, feed: mpsc::Receiver<Feed>,
                 if checked.elapsed() >= FOCUS_EVERY {
                     let now = niri_focused(&window.niri_socket, window.niri_window);
                     if now != is_focused {
-                        eprintln!("service: Any map {}", if now { "focused" } else { "unfocused: released" });
+                        eprintln!("service: pad output {}", if now { "focused" } else { "unfocused: released" });
                     }
                     is_focused = now;
                     focused.store(now, Ordering::Relaxed);
@@ -224,7 +317,7 @@ pub fn spawn(window: Window, bindings: Vec<Binding>, feed: mpsc::Receiver<Feed>,
             Ok(())
         })();
         if let Err(error) = result {
-            eprintln!("service: Any map output stopped: {error}");
+            eprintln!("service: pad output stopped: {error}");
         }
         let _ = driver.release(&mut out);
         focused.store(false, Ordering::Relaxed);
@@ -254,8 +347,8 @@ mod tests {
             self.0.push(format!("{} {}", if down { "down" } else { "up" }, if right { "right-click" } else { "left-click" }));
             Ok(())
         }
-        fn pointer(&mut self, dx: i32, dy: i32) -> Result<(), String> {
-            self.0.push(format!("move {dx},{dy}"));
+        fn pointer(&mut self, dx: f64, dy: f64) -> Result<(), String> {
+            self.0.push(format!("move {dx:.0},{dy:.0}"));
             Ok(())
         }
     }
@@ -324,6 +417,43 @@ mod tests {
         pad.press(Button::X, true);
         driver.step(&pad, true, 0.0, &mut out).unwrap();
         assert_eq!(take(&mut out), ["down h"]);
+    }
+
+    #[test]
+    fn in_smashcraft_menus_the_left_stick_moves_the_pointer_by_deflection_and_a_clicks() {
+        let curve = MenuCurve::for_window_height(1440.0);
+        let (mut driver, mut out) = (Driver::menu(curve), Recorded::default());
+        let mut pad = InputView::default();
+        driver.step(&pad, true, 0.0, &mut out).unwrap();
+        // Inside the small deadzone: still.
+        pad.left = [3900, 0];
+        driver.step(&pad, true, 0.1, &mut out).unwrap();
+        assert!(take(&mut out).is_empty());
+        // Half tilt is well under half speed; full tilt crosses the grid
+        // (0.8 of the height) in about 0.7 s.
+        pad.left = [16384, 0];
+        driver.step(&pad, true, 0.1, &mut out).unwrap();
+        pad.left = [32767, 0];
+        driver.step(&pad, true, 0.1, &mut out).unwrap();
+        assert_eq!(take(&mut out), ["move 40,0", "move 166,0"]);
+        let crossing = 0.8 * 1440.0 / curve.velocity([32767, 0]).0;
+        assert!((0.6..=0.8).contains(&crossing), "{crossing}");
+        // Diagonals keep their direction; up is negative y.
+        let (vx, vy) = curve.velocity([-23170, -23170]);
+        assert!(vx < 0.0 && (vx - vy).abs() < 1e-9);
+        // A clicks; B is the right button; the face buttons press no keys.
+        pad.left = [0, 0];
+        pad.press(Button::A, true);
+        driver.step(&pad, true, 0.0, &mut out).unwrap();
+        pad.press(Button::A, false);
+        pad.press(Button::B, true);
+        pad.press(Button::X, true);
+        driver.step(&pad, true, 0.0, &mut out).unwrap();
+        assert_eq!(take(&mut out), ["down left-click", "up left-click", "down right-click"]);
+        // Unfocused, nothing moves.
+        pad.left = [32767, 0];
+        driver.step(&pad, false, 0.1, &mut out).unwrap();
+        assert_eq!(take(&mut out), ["up right-click"]);
     }
 
     #[test]

@@ -143,7 +143,7 @@ impl Profile for Smashcraft {
         // menu and adopts the next match.
         let mut args = vec![
             "--follow-matches".into(), "--build".into(), menu.build.clone(), "--slot".into(), menu.slot.to_string(),
-            "--epoch".into(), menu.epoch.to_string(), "--device".into(), pad.device.display().to_string(),
+            "--epoch".into(), menu.epoch.to_string(), "--menu-keys".into(), "start".into(), "--device".into(), pad.device.display().to_string(),
             "--out".into(), game.documents.join("CustomMapData").display().to_string(),
         ];
         match &game.target {
@@ -154,6 +154,15 @@ impl Profile for Smashcraft {
             Target::Headless { text_out } => args.extend(["--text-out".into(), text_out.display().to_string()]),
         }
         args
+    }
+
+    /// Fighter, stage and results menus, while the map keeps publishing them
+    /// (it refreshes an open menu every 250 ms and publishes BLOCKED for play).
+    fn pointer_menu(&self) -> bool {
+        self.tracker.menu().is_some_and(|menu| {
+            matches!(menu.phase.as_str(), "CHARACTER" | "STAGE" | "RESULT")
+                && SystemTime::now().duration_since(menu.modified).is_ok_and(|age| age <= std::time::Duration::from_secs(1))
+        })
     }
 
     fn event(&self, line: &str) -> Option<HelperEvent> {
@@ -245,6 +254,21 @@ mod tests {
         // Another game forgets it until that game publishes one.
         assert_eq!(profile.session(&game(later + 1)), None);
         fs::remove_dir_all(documents).unwrap();
+    }
+
+    #[test]
+    fn the_pointer_drives_fresh_menus_and_never_play() {
+        let documents = Path::new("/prefix/Documents/Warcraft III");
+        let mut profile = Smashcraft::default();
+        assert!(!profile.pointer_menu());
+        let now = SystemTime::now();
+        for (phase, pointer) in [("CHARACTER", true), ("STAGE", true), ("RESULT", true), ("BLOCKED", false)] {
+            profile.tracker.observe(documents, Menu { phase: phase.into(), modified: now, ..menu("b", 0, 1, 0) });
+            assert_eq!(profile.pointer_menu(), pointer, "{phase}");
+        }
+        // A menu the map stopped refreshing (it closed, or the game froze) is no menu.
+        profile.tracker.observe(documents, Menu { modified: now - Duration::from_secs(2), ..menu("b", 0, 1, 0) });
+        assert!(!profile.pointer_menu());
     }
 
     #[test]

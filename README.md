@@ -72,6 +72,19 @@ intended simulation frame.
 | Left stick up | Space (up only; no tap jump) |
 | Right stick up / right / down / left | J / M / H / B |
 
+In the map's fighter, stage and results menus, the controller service makes
+the left stick a pointer, as the hand cursor is in Smash: it moves the desktop
+pointer over the game (the compositor's virtual pointer), A left-clicks to
+choose a tile, chip or button, B right-clicks, and Start still sends Y (stage
+selection, start). The pointer rests inside 0.12 of full deflection, speeds up
+with deflection to the power 1.7, and at full tilt moves 1.15 game-window
+heights a second, so it crosses the fighter grid (0.8 of the window's height)
+in about 0.7 s. It runs only while the map keeps publishing an open menu
+(CHARACTER, STAGE or RESULT, refreshed every 250 ms) and the helper reports no
+match, and stops within 100 ms of the map publishing BLOCKED for play, where
+the table above applies unchanged (smashcraft:companion/src/service/any_map.rs,
+`MenuCurve`; model::smashcraft_menu_bindings).
+
 Both sticks use Melee's conversion on every pad (smashcraft:companion/src/stick.rs,
 shared by wc3-controller and wc3-journal). The stick is first clamped radially
 to full scale, as Melee does at its 80-unit full scale. Each axis whose magnitude is then at most
@@ -317,7 +330,9 @@ your selection, and Start opens stage selection once everyone has selected.
 In stage selection, left/right changes the stage, X returns to characters,
 and A or Start begins the match. At results, A or Start confirms your rematch.
 One stick deflection or button press produces one menu action; release before
-the next action. Held controls require neutral after startup, a menu phase
+the next action. The controller service starts the helper with `--menu-keys
+start`: then only Start reaches the menus, and the service's menu pointer does
+the rest. Held controls require neutral after startup, a menu phase
 change, focus loss, and entering gameplay.
 
 The map publishes `smashcraft-journal-menu-BUILD-sSLOT.txt`, containing

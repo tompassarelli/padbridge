@@ -8,6 +8,7 @@
 
 pub mod any_map;
 pub mod interface;
+pub mod pointer;
 pub mod smashcraft;
 
 use crate::model;
@@ -90,6 +91,10 @@ pub trait Profile {
     /// The helper's arguments for this game, pad and session.
     fn args(&self, game: &Game, pad: &Pad, session: &Session) -> Vec<String>;
     fn event(&self, line: &str) -> Option<HelperEvent>;
+    /// Whether the map shows a menu the pad drives with the desktop pointer now.
+    fn pointer_menu(&self) -> bool {
+        false
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -153,6 +158,8 @@ impl Status {
 /// How long a helper may stay without its pad while a pad is plugged in
 /// before it is replaced: it reconnects the same pad by itself in 100 ms.
 pub const PAD_SWAP: Duration = Duration::from_secs(3);
+/// How often to look at the map's menu while the pad drives its pointer.
+pub const MENU_POLL: Duration = Duration::from_millis(100);
 /// How often to look for Warcraft III while none runs.
 pub const IDLE_POLL: Duration = Duration::from_secs(1);
 /// The wait before starting a helper again after one stopped.
@@ -472,7 +479,7 @@ pub fn run(config: &Config, profile: &mut dyn Profile, stop: &AtomicBool, mut re
     let mut bindings = any_map::default_bindings();
     // The running Any map output's feed; the pad watcher sends every state to it.
     let feed: Arc<Mutex<Option<mpsc::Sender<any_map::Feed>>>> = Arc::new(Mutex::new(None));
-    let mut any_map_running: Option<(any_map::Window, u32, Arc<AtomicBool>, Arc<AtomicBool>)> = None;
+    let mut any_map_running: Option<(any_map::Window, u32, bool, Arc<AtomicBool>, Arc<AtomicBool>)> = None;
     let mut watching: Option<(PathBuf, Arc<AtomicBool>)> = None;
     let mut supervisor = Supervisor::default();
     let mut running: Option<Running> = None;
@@ -571,8 +578,10 @@ pub fn run(config: &Config, profile: &mut dyn Profile, stop: &AtomicBool, mut re
                     }
                     model::ClientMessage::Bindings(new) => {
                         eprintln!("service: {} Any map bindings received", new.len());
-                        if let Some(send) = feed.lock().unwrap().as_ref() {
-                            let _ = send.send(any_map::Feed::Bindings(new.clone()));
+                        if any_map_running.as_ref().is_some_and(|(_, _, menu, ..)| !menu) {
+                            if let Some(send) = feed.lock().unwrap().as_ref() {
+                                let _ = send.send(any_map::Feed::Bindings(new.clone()));
+                            }
                         }
                         bindings = new;
                     }
@@ -615,26 +624,30 @@ pub fn run(config: &Config, profile: &mut dyn Profile, stop: &AtomicBool, mut re
                 supervisor = Supervisor::default();
             }
         }
-        // The Any map profile presses keys into the game's window while it has focus.
+        // Pad output into the game's window while it has focus: the Any map
+        // profile, or the pointer in the map's menus (never during play).
+        let menu = resolved == model::Profile::Smashcraft && profile.pointer_menu()
+            && status.helper.as_ref().is_none_or(|helper| !helper.in_match);
         let want = match (&game, &pad) {
-            (Some(Game { pid, target: Target::Window { display, niri_window, niri_socket, .. }, .. }), Some(_)) if resolved == model::Profile::AnyMap => {
-                Some((any_map::Window { display: display.clone(), niri_socket: niri_socket.clone(), niri_window: *niri_window }, *pid))
+            (Some(Game { pid, target: Target::Window { display, niri_window, niri_socket, .. }, .. }), Some(_)) if resolved == model::Profile::AnyMap || menu => {
+                Some((any_map::Window { display: display.clone(), niri_socket: niri_socket.clone(), niri_window: *niri_window }, *pid, menu))
             }
             _ => None,
         };
-        if any_map_running.as_ref().map(|(window, pid, ..)| (window.clone(), *pid)) != want {
-            if let Some((_, _, stop, _)) = any_map_running.take() {
+        if any_map_running.as_ref().map(|(window, pid, menu, ..)| (window.clone(), *pid, *menu)) != want {
+            if let Some((_, _, menu, stop, _)) = any_map_running.take() {
                 stop.store(true, Ordering::Relaxed);
                 *feed.lock().unwrap() = None;
-                eprintln!("service: Any map off");
+                eprintln!("service: {} off", if menu { "menu pointer" } else { "Any map" });
             }
-            if let Some((window, pid)) = want {
+            if let Some((window, pid, menu)) = want {
                 let (send, receive) = mpsc::channel();
                 let (stop, focused) = (Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false)));
-                any_map::spawn(window.clone(), bindings.clone(), receive, Arc::clone(&stop), Arc::clone(&focused));
+                let mode = if menu { any_map::Mode::Menu } else { any_map::Mode::AnyMap(bindings.clone()) };
+                any_map::spawn(window.clone(), mode, receive, Arc::clone(&stop), Arc::clone(&focused));
                 *feed.lock().unwrap() = Some(send);
-                eprintln!("service: Any map on for Warcraft III pid={pid}");
-                any_map_running = Some((window, pid, stop, focused));
+                eprintln!("service: {} on for Warcraft III pid={pid}", if menu { "menu pointer" } else { "Any map" });
+                any_map_running = Some((window, pid, menu, stop, focused));
             }
         }
         match supervisor.step(game.as_ref(), pad.as_ref(), session.as_ref(), now) {
@@ -689,15 +702,18 @@ pub fn run(config: &Config, profile: &mut dyn Profile, stop: &AtomicBool, mut re
         let idle = status.game.is_none();
         publish(&status, &mut written);
         if let Some(interface) = &interface {
-            interface.status(&snapshot(&status, choice, resolved, any_map_running.as_ref().map(|(.., focused)| focused.load(Ordering::Relaxed))));
+            let any_map = any_map_running.as_ref().filter(|(_, _, menu, ..)| !menu).map(|(.., focused)| focused.load(Ordering::Relaxed));
+            interface.status(&snapshot(&status, choice, resolved, any_map));
         }
         // Without a game, looking once a second is enough and costs little.
-        thread::sleep(if idle { config.poll.max(IDLE_POLL) } else { config.poll });
+        // The menu pointer must stop promptly when play begins.
+        let pointing = any_map_running.as_ref().is_some_and(|(_, _, menu, ..)| *menu);
+        thread::sleep(if idle { config.poll.max(IDLE_POLL) } else if pointing { config.poll.min(MENU_POLL) } else { config.poll });
     }
     if let Some(current) = running.take() {
         stop_child(current);
     }
-    if let Some((_, _, stop, _)) = any_map_running.take() {
+    if let Some((_, _, _, stop, _)) = any_map_running.take() {
         stop.store(true, Ordering::Relaxed);
         // Its release of held keys runs on its own thread; give it a moment.
         thread::sleep(Duration::from_millis(50));

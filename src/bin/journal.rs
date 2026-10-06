@@ -101,6 +101,8 @@ mod linux {
         text_out: Option<PathBuf>,
         trace: bool,
         follow_matches: bool,
+        /// Menus take only Start from the pad: the service drives them with the pointer.
+        menu_start_only: bool,
         window: Option<u32>,
         pid: Option<u32>,
         niri_window: Option<u64>,
@@ -848,7 +850,7 @@ mod linux {
     fn usage() -> &'static str {
         "wc3-journal --service [--display :0] [--pads /dev/input/by-id] [--status FILE] [--interface 127.0.0.1:47631|off] [--headless DOCUMENTS]\n\
          Always on: finds Warcraft III on the display, the controller and the map's session, and keeps a helper serving them.\n\
-         wc3-journal --follow-matches --build BUILD --slot N [--epoch N] --device /dev/input/eventN --out DIR --editbox-display :N [--trace]\n\
+         wc3-journal --follow-matches --build BUILD --slot N [--epoch N] [--menu-keys all|start] --device /dev/input/eventN --out DIR --editbox-display :N [--trace]\n\
          Start in character selection; stick left/right chooses, A selects, X backs, Start confirms. Follows matches and rematches.\n\
          Diagnostic only: wc3-journal --device /dev/input/eventN --out DIR --ready-file PATH --epoch-monotonic-ns NS [--mailbox-display :N | --editbox-display :N] [--first-frame N] [--stop-frame N] [--trace]\n\
          Keyboard output also requires --x11-window DECIMAL_ID --pid PID and exactly one of --niri-window ID / --private-wlr-app-id ID.\n\
@@ -1064,6 +1066,11 @@ mod linux {
             text_out: values.get("--text-out").map(PathBuf::from),
             trace,
             follow_matches,
+            menu_start_only: match values.get("--menu-keys").map(String::as_str) {
+                None | Some("all") => false,
+                Some("start") => true,
+                Some(other) => return Err(format!("invalid --menu-keys {other:?}: all or start")),
+            },
             window: values
                 .get("--x11-window")
                 .map(|s| s.parse().map_err(|_| "invalid --x11-window"))
@@ -1134,6 +1141,7 @@ mod linux {
         phase: Option<MenuPhase>,
         armed: bool,
         accept_since_ns: u128,
+        start_only: bool,
     }
 
     impl MenuInput {
@@ -1159,6 +1167,9 @@ mod linux {
                 return None;
             }
             let pressed = menu_buttons(after, start_after) & !menu_buttons(before, start_before);
+            if self.start_only && pressed != 0x8000_0000 {
+                return None;
+            }
             // A physical event changes only one mapped menu control.
             match pressed {
                 MOVE_LEFT => Some("w"),
@@ -1225,6 +1236,14 @@ mod linux {
         assert_eq!(input.press(attack, neutral, false, false, 42), None);
         assert_eq!(input.press(neutral, attack, false, false, 39), None);
         assert_eq!(input.press(neutral, attack, false, false, 43), Some("n"));
+        // With the service's menu pointer, only Start reaches the menus.
+        let mut pointer = MenuInput { start_only: true, ..MenuInput::default() };
+        pointer.observe(Some(MenuPhase::Character), neutral, false, 50);
+        assert_eq!(pointer.press(neutral, attack, false, false, 51), None);
+        assert_eq!(pointer.press(attack, neutral, false, false, 52), None);
+        assert_eq!(pointer.press(neutral, right, false, false, 53), None);
+        assert_eq!(pointer.press(right, neutral, false, false, 54), None);
+        assert_eq!(pointer.press(neutral, neutral, false, true, 55), Some("y"));
     }
 
     fn quiescent_path(dir: &Path, build: &str, epoch: u32, slot: u32) -> PathBuf {
@@ -3871,7 +3890,7 @@ mod linux {
         let mut ready_publication_ns = 0;
         let mut waiting_ready = o.follow_matches;
         let mut waiting_start = false;
-        let mut menu_input = MenuInput::default();
+        let mut menu_input = MenuInput { start_only: o.menu_start_only, ..MenuInput::default() };
         let mut menu = None;
         let mut ended = false;
         let mut end_marker_sent = false;
