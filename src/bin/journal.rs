@@ -846,7 +846,7 @@ mod linux {
     }
 
     fn usage() -> &'static str {
-        "wc3-journal --service [--display :0] [--pads /dev/input/by-id] [--status FILE] [--headless DOCUMENTS]\n\
+        "wc3-journal --service [--display :0] [--pads /dev/input/by-id] [--status FILE] [--interface 127.0.0.1:47631|off] [--headless DOCUMENTS]\n\
          Always on: finds Warcraft III on the display, the controller and the map's session, and keeps a helper serving them.\n\
          wc3-journal --follow-matches --build BUILD --slot N [--epoch N] --device /dev/input/eventN --out DIR --editbox-display :N [--trace]\n\
          Start in character selection; stick left/right chooses, A selects, X backs, Start confirms. Follows matches and rematches.\n\
@@ -4453,6 +4453,7 @@ mod linux {
                 "--status" => config.status_file = Some(value()?.into()),
                 "--helper" => config.helper = value()?.into(),
                 "--headless" => config.headless = Some(value()?.into()),
+                "--interface" => config.interface = Some(value()?).filter(|address| address != "off"),
                 "--poll-ms" => config.poll = Duration::from_millis(value()?.parse().map_err(|_| "invalid --poll-ms")?),
                 _ => return Err(format!("unexpected argument {arg:?}\n{}", usage())),
             }

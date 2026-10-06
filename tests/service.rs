@@ -86,7 +86,7 @@ fn the_service_follows_a_fake_session_through_new_sessions_and_game_restarts() {
     menu(&data, 0, "CHARACTER");
 
     let _service = Service(Command::new(env!("CARGO_BIN_EXE_wc3-journal"))
-        .args(["--service", "--pads", pads.to_str().unwrap(), "--headless", documents.to_str().unwrap(), "--status", status.to_str().unwrap(), "--poll-ms", "50"])
+        .args(["--service", "--pads", pads.to_str().unwrap(), "--headless", documents.to_str().unwrap(), "--status", status.to_str().unwrap(), "--poll-ms", "50", "--interface", "off"])
         .stdin(Stdio::null())
         .spawn()
         .unwrap());

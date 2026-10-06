@@ -265,6 +265,13 @@ device), and 2 s after a helper exits for any reason. A lock in
 (`state=serving`, `game_pid`, `session`, `helper_pid`, ...). Discovery and
 the helper's lifecycle are map-agnostic in smashcraft:companion/src/service.rs;
 map-specific knowledge is a `Profile` (smashcraft:companion/src/service/smashcraft.rs).
+Windows talk to it on TCP 127.0.0.1:47631 (smashcraft:companion/src/service/interface.rs),
+one JSON object per line in the types of smashcraft:companion/model: the current
+`{"status":...}` on connect and on every change, `{"input":...}` for every change
+of the pad's state (read without grabbing it), and from the window
+`{"profile":"auto"|"smashcraft"|"any_map"|"off"}`. A profile other than
+Smashcraft stops the helper; Any map's key output is not wired yet. Holding
+the port is part of being single-instance; `--interface off` opens none.
 `--display`, `--pads`, `--status` and `--headless DOCUMENTS` (a stand-in game
 whose `game` file names it; the helper types into `typed.txt`) serve tests.
 smashcraft:companion/tests/service.rs drives a fake session through a new map

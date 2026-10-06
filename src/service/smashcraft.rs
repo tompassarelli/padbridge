@@ -9,6 +9,7 @@
 //! so it gets a new session key and a fresh helper.
 
 use super::{Game, HelperEvent, Pad, Profile, Session, Target};
+use crate::model;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -81,15 +82,16 @@ impl Tracker {
 
     pub fn session(&self) -> Option<Session> {
         let (_, menu) = self.current.as_ref()?;
-        let phase = match menu.phase.as_str() {
-            "CHARACTER" => "fighter selection",
-            "STAGE" => "stage selection",
-            "RESULT" => "results",
-            _ => "in a match",
+        let (phase, shown) = match menu.phase.as_str() {
+            "CHARACTER" => ("fighter selection", model::Phase::CharacterSelect),
+            "STAGE" => ("stage selection", model::Phase::StageSelect),
+            "RESULT" => ("results", model::Phase::Results),
+            _ => ("in a match", model::Phase::Match),
         };
         Some(Session {
             key: format!("{}/s{}/{}", menu.build, menu.slot, self.generation),
             summary: format!("Smashcraft {}, player {}, {phase}", menu.build, menu.slot + 1),
+            shown: Some(model::Session { map: "Smashcraft".into(), phase: shown, player: Some(menu.slot + 1) }),
         })
     }
 

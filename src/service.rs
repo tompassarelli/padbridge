@@ -6,8 +6,10 @@
 //! helper, and the helper's command line, belong to a [`Profile`];
 //! [`smashcraft::Smashcraft`] is the Smashcraft one.
 
+pub mod interface;
 pub mod smashcraft;
 
+use crate::model;
 use serde_json::Value;
 use std::{
     fs,
@@ -16,6 +18,7 @@ use std::{
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::{
+        Arc,
         atomic::{AtomicBool, Ordering},
         mpsc,
     },
@@ -63,6 +66,8 @@ pub struct Session {
     pub key: String,
     /// For people, as in "Smashcraft playable-0047, player 1, fighter selection".
     pub summary: String,
+    /// What a window shows of it.
+    pub shown: Option<model::Session>,
 }
 
 /// What a helper's log line says about it.
@@ -401,6 +406,8 @@ pub struct Config {
     /// A stand-in game with no window: its Documents folder. Its `game` file
     /// names the game; changing it is a restart. The helper types into `typed.txt` there.
     pub headless: Option<PathBuf>,
+    /// The local interface's address (interface::ADDRESS); absent opens none.
+    pub interface: Option<String>,
 }
 
 impl Default for Config {
@@ -413,6 +420,7 @@ impl Default for Config {
             status_file: Some(home.join(".local/state/smashcraft/controller-service.txt")),
             poll: Duration::from_millis(250),
             headless: None,
+            interface: Some(interface::ADDRESS.into()),
         }
     }
 }
@@ -454,6 +462,13 @@ pub fn run(config: &Config, profile: &mut dyn Profile, stop: &AtomicBool, mut re
     if lock.try_lock().is_err() {
         return Err(format!("another controller service is already running for display {} (lock {})", config.display, lock_file.display()));
     }
+    let interface = config.interface.as_deref().map(interface::Interface::listen).transpose()
+        .map_err(|error| format!("{error}: is another controller service running?"))?;
+    if let Some(interface) = &interface {
+        eprintln!("service: windows connect to {}", interface.address);
+    }
+    let mut choice = model::ProfileChoice::Auto;
+    let mut watching: Option<(PathBuf, Arc<AtomicBool>)> = None;
     let mut supervisor = Supervisor::default();
     let mut running: Option<Running> = None;
     let mut status = Status { profile: profile.name().into(), ..Status::default() };
@@ -542,6 +557,47 @@ pub fn run(config: &Config, profile: &mut dyn Profile, stop: &AtomicBool, mut re
                 eprintln!("service: session {} ({})", session.key, session.summary);
             }
         }
+        if let Some(interface) = &interface {
+            for message in interface.commands() {
+                match message {
+                    model::ClientMessage::Profile(chosen) => {
+                        eprintln!("service: profile chosen: {chosen:?}");
+                        choice = chosen;
+                    }
+                    model::ClientMessage::Bindings(bindings) => eprintln!("service: {} Any map bindings received", bindings.len()),
+                }
+            }
+            // The pad's live state, for windows; a new watcher follows a new device.
+            if let Some(pad) = &pad {
+                if watching.as_ref().is_none_or(|(device, alive)| *device != pad.device || !alive.load(Ordering::Relaxed)) {
+                    if let Some((_, alive)) = watching.take() {
+                        alive.store(false, Ordering::Relaxed);
+                    }
+                    let alive = Arc::new(AtomicBool::new(true));
+                    let (device, flag, out) = (pad.device.clone(), Arc::clone(&alive), interface.clone());
+                    thread::spawn(move || {
+                        let _ = interface::watch_pad(&device, |view| {
+                            if flag.load(Ordering::Relaxed) {
+                                out.input(view);
+                            }
+                        });
+                        flag.store(false, Ordering::Relaxed);
+                    });
+                    watching = Some((pad.device.clone(), alive));
+                }
+            }
+        }
+        let resolved = choice.resolve(session.is_some());
+        // Another profile than this one presses nothing through its helper.
+        let session = if resolved == model::Profile::Smashcraft { session } else { None };
+        if resolved != model::Profile::Smashcraft {
+            if let Some(current) = running.take() {
+                eprintln!("service: stopping the helper: profile {resolved:?}");
+                stop_child(current);
+                status.helper = None;
+                supervisor = Supervisor::default();
+            }
+        }
         match supervisor.step(game.as_ref(), pad.as_ref(), session.as_ref(), now) {
             Decision::Keep => {}
             Decision::Stop(reason) => {
@@ -593,6 +649,9 @@ pub fn run(config: &Config, profile: &mut dyn Profile, stop: &AtomicBool, mut re
         status.session = session;
         let idle = status.game.is_none();
         publish(&status, &mut written);
+        if let Some(interface) = &interface {
+            interface.status(&snapshot(&status, choice, resolved));
+        }
         // Without a game, looking once a second is enough and costs little.
         thread::sleep(if idle { config.poll.max(IDLE_POLL) } else { config.poll });
     }
@@ -602,6 +661,28 @@ pub fn run(config: &Config, profile: &mut dyn Profile, stop: &AtomicBool, mut re
     status.helper = None;
     publish(&Status { problem: Some("stopped".into()), ..status }, &mut written);
     Ok(())
+}
+
+/// What windows see: the service's state in the shared model.
+pub fn snapshot(status: &Status, choice: model::ProfileChoice, profile: model::Profile) -> model::Snapshot {
+    model::Snapshot {
+        pad: status.pad.as_ref().map(|pad| model::Pad {
+            name: pad.name.clone(),
+            id: pad.link.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default(),
+        }),
+        game: status.game.as_ref().map(|game| model::Game { pid: game.pid, window: matches!(game.target, Target::Window { .. }) }),
+        session: status.session.as_ref().and_then(|session| session.shown.clone()),
+        profile,
+        choice,
+        output: model::Output {
+            running: status.helper.is_some(),
+            ready: status.helper.as_ref().is_some_and(|helper| helper.ready),
+            // The helper reports focus changes; it starts focused until it says otherwise.
+            focused: status.helper.as_ref().is_some_and(|helper| helper.focused.unwrap_or(true)),
+        },
+        problem: (status.helper.is_none() && status.problem.is_some())
+            .then(|| "Controller support hit a problem and is starting again.".to_owned()),
+    }
 }
 
 #[cfg(test)]
@@ -620,7 +701,7 @@ mod tests {
         Pad { link: "/dev/input/by-id/usb-Microsoft-event-joystick".into(), device: "/dev/input/event4".into(), name: "Xbox".into() }
     }
     fn session(key: &str) -> Session {
-        Session { key: key.into(), summary: key.into() }
+        Session { key: key.into(), summary: key.into(), shown: None }
     }
 
     #[test]
