@@ -147,6 +147,8 @@ impl Status {
 /// How long a helper may stay without its pad while a pad is plugged in
 /// before it is replaced: it reconnects the same pad by itself in 100 ms.
 pub const PAD_SWAP: Duration = Duration::from_secs(3);
+/// How often to look for Warcraft III while none runs.
+pub const IDLE_POLL: Duration = Duration::from_secs(1);
 /// The wait before starting a helper again after one stopped.
 pub const RETRY: Duration = Duration::from_secs(2);
 
@@ -236,6 +238,10 @@ pub fn warcraft_processes(proc_root: &Path, display: &str) -> Vec<(u32, u64, Pat
     let mut found = Vec::new();
     for entry in entries.flatten() {
         let Some(pid) = entry.file_name().to_str().and_then(|name| name.parse::<u32>().ok()) else { continue };
+        // The short name ("Warcraft III.ex") rules out every other process cheaply.
+        if !fs::read_to_string(entry.path().join("comm")).is_ok_and(|comm| comm.to_ascii_lowercase().starts_with("warcraft iii")) {
+            continue;
+        }
         let Ok(command) = fs::read(entry.path().join("cmdline")) else { continue };
         let is_game = command.split(|b| *b == 0).any(|arg| {
             String::from_utf8_lossy(arg).rsplit(['/', '\\']).next().is_some_and(|name| name.eq_ignore_ascii_case("Warcraft III.exe"))
@@ -581,8 +587,10 @@ pub fn run(config: &Config, profile: &mut dyn Profile, stop: &AtomicBool, mut re
         status.game = game;
         status.pad = pad;
         status.session = session;
+        let idle = status.game.is_none();
         publish(&status, &mut written);
-        thread::sleep(config.poll);
+        // Without a game, looking once a second is enough and costs little.
+        thread::sleep(if idle { config.poll.max(IDLE_POLL) } else { config.poll });
     }
     if let Some(current) = running.take() {
         stop_child(current);
@@ -672,6 +680,7 @@ mod tests {
             fs::create_dir_all(&dir).unwrap();
             fs::write(dir.join("cmdline"), format!("{command}\0-launch\0")).unwrap();
             fs::write(dir.join("environ"), format!("HOME=/home/tom\0DISPLAY={display}\0WINEPREFIX=/prefix/{pid}/\0")).unwrap();
+            fs::write(dir.join("comm"), if command.ends_with(".exe") { "Warcraft III.ex\n" } else { "bash\n" }).unwrap();
             fs::write(dir.join("stat"), format!("{pid} (Warcraft III.ex) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 {start} 20")).unwrap();
         };
         process(10, "C:\\Program Files (x86)\\Warcraft III\\_retail_\\x86_64\\Warcraft III.exe", ":0", 500);
