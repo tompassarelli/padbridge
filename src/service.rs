@@ -109,7 +109,7 @@ pub struct Status {
 impl Status {
     /// One `key=value` per line, for the status file.
     pub fn lines(&self) -> String {
-        let mut text = format!("profile={}\n", self.profile);
+        let mut text = format!("service_pid={}\nprofile={}\n", std::process::id(), self.profile);
         let state = match (&self.helper, &self.game, &self.pad, &self.session) {
             (Some(helper), ..) if helper.ready => "serving",
             (Some(_), ..) => "starting",
