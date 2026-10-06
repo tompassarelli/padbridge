@@ -269,8 +269,19 @@ Windows talk to it on TCP 127.0.0.1:47631 (smashcraft:companion/src/service/inte
 one JSON object per line in the types of smashcraft:companion/model: the current
 `{"status":...}` on connect and on every change, `{"input":...}` for every change
 of the pad's state (read without grabbing it), and from the window
-`{"profile":"auto"|"smashcraft"|"any_map"|"off"}`. A profile other than
-Smashcraft stops the helper; Any map's key output is not wired yet. Holding
+`{"profile":"auto"|"smashcraft"|"any_map"|"off"}` and `{"bindings":[...]}`.
+`auto` (the default) runs Smashcraft while this game has published a
+Smashcraft menu since it started, and Any map otherwise.
+
+The Any map profile (smashcraft:companion/src/service/any_map.rs) plays any
+map, melee included: `model::any_map_bindings()` puts the camera arrows on the
+left stick, the pointer on the right stick, left and right click on A and B,
+Q/W/E/R on X, Y, RT and LT, control groups 1 and 2 on the bumpers, 3 and 4 on
+D-pad up and right, F1 (hero) and Tab on D-pad down and left, F10 on Start and
+Escape on Back. Keys, clicks and pointer motion go through XTEST on the game's
+display only while niri's focused window is the game's; losing focus releases
+everything, and nothing presses again until the pad is neutral. Any other
+profile stops the Smashcraft helper, and Smashcraft stops Any map. Holding
 the port is part of being single-instance; `--interface off` opens none.
 `--display`, `--pads`, `--status` and `--headless DOCUMENTS` (a stand-in game
 whose `game` file names it; the helper types into `typed.txt`) serve tests.

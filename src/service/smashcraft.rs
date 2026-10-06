@@ -95,14 +95,28 @@ impl Tracker {
         })
     }
 
+    /// Another game: its sessions start afresh (generations keep counting).
+    pub fn forget(&mut self) {
+        self.current = None;
+    }
+
     pub fn menu(&self) -> Option<&Menu> {
         self.current.as_ref().map(|(_, menu)| menu)
     }
 }
 
+/// When the process with these start ticks (/proc/PID/stat field 22) started.
+pub fn started_at(birth: u64) -> Option<SystemTime> {
+    let stat = fs::read_to_string("/proc/stat").ok()?;
+    let boot: u64 = stat.lines().find_map(|line| line.strip_prefix("btime "))?.trim().parse().ok()?;
+    // USER_HZ is 100 on Linux.
+    Some(SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(boot) + std::time::Duration::from_millis(birth * 10))
+}
+
 #[derive(Default)]
 pub struct Smashcraft {
     tracker: Tracker,
+    game: Option<(u32, u64)>,
 }
 
 impl Profile for Smashcraft {
@@ -111,7 +125,13 @@ impl Profile for Smashcraft {
     }
 
     fn session(&mut self, game: &Game) -> Option<Session> {
-        if let Some(menu) = newest_menu(&game.documents.join("CustomMapData")) {
+        if self.game != Some((game.pid, game.birth)) {
+            self.tracker.forget();
+            self.game = Some((game.pid, game.birth));
+        }
+        // Only what this game published: an older menu file is an earlier game's.
+        let started = started_at(game.birth);
+        if let Some(menu) = newest_menu(&game.documents.join("CustomMapData")).filter(|menu| started.is_none_or(|at| menu.modified >= at)) {
             self.tracker.observe(&game.documents, menu);
         }
         self.tracker.session()
@@ -208,6 +228,23 @@ mod tests {
         let menu = newest_menu(&dir).unwrap();
         assert_eq!((menu.build.as_str(), menu.slot, menu.epoch), ("playable-0047", 1, 0));
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_menu_from_before_this_game_started_is_no_session() {
+        let documents = std::env::temp_dir().join(format!("smashcraft-fresh-{}", std::process::id()));
+        fs::create_dir_all(documents.join("CustomMapData")).unwrap();
+        fs::write(documents.join("CustomMapData/smashcraft-journal-menu-old-s0.txt"),
+            "call Preload( \"SMASHCRAFT JOURNAL MENU v=1 build=old epoch=0 slot=0 phase=CHARACTER\" )\nendfunction\n").unwrap();
+        let game = |birth| Game { pid: 1, birth, documents: documents.clone(), target: Target::Headless { text_out: "/dev/null".into() } };
+        let boot = started_at(0).unwrap();
+        let later = (SystemTime::now().duration_since(boot).unwrap().as_millis() / 10) as u64 + 360_000;
+        let mut profile = Smashcraft::default();
+        assert_eq!(profile.session(&game(later)), None);
+        assert!(profile.session(&game(1)).is_some());
+        // Another game forgets it until that game publishes one.
+        assert_eq!(profile.session(&game(later + 1)), None);
+        fs::remove_dir_all(documents).unwrap();
     }
 
     #[test]

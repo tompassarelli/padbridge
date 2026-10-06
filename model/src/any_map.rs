@@ -165,15 +165,17 @@ mod tests {
     fn a_button_press_and_release_are_one_key_down_and_up() {
         let mut m = armed();
         let mut pad = InputView::default();
-        pad.press(Button::A, true);
+        pad.press(Button::X, true);
         assert_eq!(m.update(&pad), vec![Event::Down(key("q"))]);
         assert!(m.update(&pad).is_empty());
-        pad.press(Button::A, false);
+        pad.press(Button::X, false);
         assert_eq!(m.update(&pad), vec![Event::Up(key("q"))]);
+        pad.press(Button::A, true);
+        assert_eq!(m.update(&pad), vec![Event::Down(Held::LeftClick)]);
     }
 
     #[test]
-    fn triggers_click_and_sticks_press_arrows_past_the_deadzone() {
+    fn triggers_press_past_their_threshold_and_sticks_press_arrows_past_the_deadzone() {
         let mut m = armed();
         let mut pad = InputView { rt: 4000, left: [-9174, 0], ..InputView::default() };
         assert!(m.update(&pad).is_empty());
@@ -181,7 +183,7 @@ mod tests {
         pad.left = [-9175, 20000];
         assert_eq!(
             m.update(&pad),
-            vec![Event::Down(key("down")), Event::Down(key("left")), Event::Down(Held::LeftClick)]
+            vec![Event::Down(key("down")), Event::Down(key("e")), Event::Down(key("left"))]
         );
     }
 
@@ -193,10 +195,10 @@ mod tests {
         let mut m = Mapper::new(bindings);
         let mut pad = InputView::default();
         m.update(&pad);
-        pad.press(Button::A, true);
+        pad.press(Button::X, true);
         pad.press(Button::Y, true);
         assert_eq!(m.update(&pad), vec![Event::Down(key("q"))]);
-        pad.press(Button::A, false);
+        pad.press(Button::X, false);
         assert!(m.update(&pad).is_empty());
         pad.press(Button::Y, false);
         assert_eq!(m.update(&pad), vec![Event::Up(key("q"))]);
@@ -206,13 +208,13 @@ mod tests {
     fn release_all_lets_go_and_waits_for_neutral_before_pressing_again() {
         let mut m = armed();
         let mut pad = InputView::default();
-        pad.press(Button::B, true);
+        pad.press(Button::Y, true);
         m.update(&pad);
         assert_eq!(m.release_all(), vec![Event::Up(key("w"))]);
         assert!(m.update(&pad).is_empty(), "a held press is not replayed");
-        pad.press(Button::B, false);
+        pad.press(Button::Y, false);
         assert!(m.update(&pad).is_empty());
-        pad.press(Button::B, true);
+        pad.press(Button::Y, true);
         assert_eq!(m.update(&pad), vec![Event::Down(key("w"))]);
     }
 

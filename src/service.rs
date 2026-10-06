@@ -6,6 +6,7 @@
 //! helper, and the helper's command line, belong to a [`Profile`];
 //! [`smashcraft::Smashcraft`] is the Smashcraft one.
 
+pub mod any_map;
 pub mod interface;
 pub mod smashcraft;
 
@@ -18,7 +19,7 @@ use std::{
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
         mpsc,
     },
@@ -468,6 +469,10 @@ pub fn run(config: &Config, profile: &mut dyn Profile, stop: &AtomicBool, mut re
         eprintln!("service: windows connect to {}", interface.address);
     }
     let mut choice = model::ProfileChoice::Auto;
+    let mut bindings = any_map::default_bindings();
+    // The running Any map output's feed; the pad watcher sends every state to it.
+    let feed: Arc<Mutex<Option<mpsc::Sender<any_map::Feed>>>> = Arc::new(Mutex::new(None));
+    let mut any_map_running: Option<(any_map::Window, u32, Arc<AtomicBool>, Arc<AtomicBool>)> = None;
     let mut watching: Option<(PathBuf, Arc<AtomicBool>)> = None;
     let mut supervisor = Supervisor::default();
     let mut running: Option<Running> = None;
@@ -564,27 +569,39 @@ pub fn run(config: &Config, profile: &mut dyn Profile, stop: &AtomicBool, mut re
                         eprintln!("service: profile chosen: {chosen:?}");
                         choice = chosen;
                     }
-                    model::ClientMessage::Bindings(bindings) => eprintln!("service: {} Any map bindings received", bindings.len()),
+                    model::ClientMessage::Bindings(new) => {
+                        eprintln!("service: {} Any map bindings received", new.len());
+                        if let Some(send) = feed.lock().unwrap().as_ref() {
+                            let _ = send.send(any_map::Feed::Bindings(new.clone()));
+                        }
+                        bindings = new;
+                    }
                 }
             }
-            // The pad's live state, for windows; a new watcher follows a new device.
-            if let Some(pad) = &pad {
-                if watching.as_ref().is_none_or(|(device, alive)| *device != pad.device || !alive.load(Ordering::Relaxed)) {
-                    if let Some((_, alive)) = watching.take() {
-                        alive.store(false, Ordering::Relaxed);
-                    }
-                    let alive = Arc::new(AtomicBool::new(true));
-                    let (device, flag, out) = (pad.device.clone(), Arc::clone(&alive), interface.clone());
-                    thread::spawn(move || {
-                        let _ = interface::watch_pad(&device, |view| {
-                            if flag.load(Ordering::Relaxed) {
+        }
+        // The pad's live state, for windows and the Any map output; a new
+        // watcher follows a new device.
+        if let Some(pad) = &pad {
+            if watching.as_ref().is_none_or(|(device, alive)| *device != pad.device || !alive.load(Ordering::Relaxed)) {
+                if let Some((_, alive)) = watching.take() {
+                    alive.store(false, Ordering::Relaxed);
+                }
+                let alive = Arc::new(AtomicBool::new(true));
+                let (device, flag, out, feed) = (pad.device.clone(), Arc::clone(&alive), interface.clone(), Arc::clone(&feed));
+                thread::spawn(move || {
+                    let _ = interface::watch_pad(&device, |view| {
+                        if flag.load(Ordering::Relaxed) {
+                            if let Some(out) = &out {
                                 out.input(view);
                             }
-                        });
-                        flag.store(false, Ordering::Relaxed);
+                            if let Some(send) = feed.lock().unwrap().as_ref() {
+                                let _ = send.send(any_map::Feed::Input(*view));
+                            }
+                        }
                     });
-                    watching = Some((pad.device.clone(), alive));
-                }
+                    flag.store(false, Ordering::Relaxed);
+                });
+                watching = Some((pad.device.clone(), alive));
             }
         }
         let resolved = choice.resolve(session.is_some());
@@ -596,6 +613,28 @@ pub fn run(config: &Config, profile: &mut dyn Profile, stop: &AtomicBool, mut re
                 stop_child(current);
                 status.helper = None;
                 supervisor = Supervisor::default();
+            }
+        }
+        // The Any map profile presses keys into the game's window while it has focus.
+        let want = match (&game, &pad) {
+            (Some(Game { pid, target: Target::Window { display, niri_window, niri_socket, .. }, .. }), Some(_)) if resolved == model::Profile::AnyMap => {
+                Some((any_map::Window { display: display.clone(), niri_socket: niri_socket.clone(), niri_window: *niri_window }, *pid))
+            }
+            _ => None,
+        };
+        if any_map_running.as_ref().map(|(window, pid, ..)| (window.clone(), *pid)) != want {
+            if let Some((_, _, stop, _)) = any_map_running.take() {
+                stop.store(true, Ordering::Relaxed);
+                *feed.lock().unwrap() = None;
+                eprintln!("service: Any map off");
+            }
+            if let Some((window, pid)) = want {
+                let (send, receive) = mpsc::channel();
+                let (stop, focused) = (Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false)));
+                any_map::spawn(window.clone(), bindings.clone(), receive, Arc::clone(&stop), Arc::clone(&focused));
+                *feed.lock().unwrap() = Some(send);
+                eprintln!("service: Any map on for Warcraft III pid={pid}");
+                any_map_running = Some((window, pid, stop, focused));
             }
         }
         match supervisor.step(game.as_ref(), pad.as_ref(), session.as_ref(), now) {
@@ -650,7 +689,7 @@ pub fn run(config: &Config, profile: &mut dyn Profile, stop: &AtomicBool, mut re
         let idle = status.game.is_none();
         publish(&status, &mut written);
         if let Some(interface) = &interface {
-            interface.status(&snapshot(&status, choice, resolved));
+            interface.status(&snapshot(&status, choice, resolved, any_map_running.as_ref().map(|(.., focused)| focused.load(Ordering::Relaxed))));
         }
         // Without a game, looking once a second is enough and costs little.
         thread::sleep(if idle { config.poll.max(IDLE_POLL) } else { config.poll });
@@ -658,13 +697,19 @@ pub fn run(config: &Config, profile: &mut dyn Profile, stop: &AtomicBool, mut re
     if let Some(current) = running.take() {
         stop_child(current);
     }
+    if let Some((_, _, stop, _)) = any_map_running.take() {
+        stop.store(true, Ordering::Relaxed);
+        // Its release of held keys runs on its own thread; give it a moment.
+        thread::sleep(Duration::from_millis(50));
+    }
     status.helper = None;
     publish(&Status { problem: Some("stopped".into()), ..status }, &mut written);
     Ok(())
 }
 
 /// What windows see: the service's state in the shared model.
-pub fn snapshot(status: &Status, choice: model::ProfileChoice, profile: model::Profile) -> model::Snapshot {
+/// `any_map` is the Any map output's focus while it runs.
+pub fn snapshot(status: &Status, choice: model::ProfileChoice, profile: model::Profile, any_map: Option<bool>) -> model::Snapshot {
     model::Snapshot {
         pad: status.pad.as_ref().map(|pad| model::Pad {
             name: pad.name.clone(),
@@ -674,12 +719,12 @@ pub fn snapshot(status: &Status, choice: model::ProfileChoice, profile: model::P
         session: status.session.as_ref().and_then(|session| session.shown.clone()),
         profile,
         choice,
-        output: model::Output {
+        output: if let Some(focused) = any_map { model::Output { running: true, ready: true, focused } } else { model::Output {
             running: status.helper.is_some(),
             ready: status.helper.as_ref().is_some_and(|helper| helper.ready),
             // The helper reports focus changes; it starts focused until it says otherwise.
             focused: status.helper.as_ref().is_some_and(|helper| helper.focused.unwrap_or(true)),
-        },
+        } },
         problem: (status.helper.is_none() && status.problem.is_some())
             .then(|| "Controller support hit a problem and is starting again.".to_owned()),
     }

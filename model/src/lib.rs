@@ -288,25 +288,26 @@ pub fn smashcraft_bindings() -> Vec<Binding> {
     ]
 }
 
-/// Defaults for any map: camera on the left stick, pointer on the right,
-/// clicks on the triggers, the command card's top row on the face buttons.
+/// Defaults for melee and any map: camera on the left stick, pointer on the
+/// right, select and command on A and B, the command card's top row on X, Y
+/// and the triggers, control groups on the bumpers and the pad.
 pub fn any_map_bindings() -> Vec<Binding> {
     use Control::*;
     vec![
-        bind(Rt, "Select / click", Press::LeftClick),
-        bind(Lt, "Command / right click", Press::RightClick),
-        bind(A, "Ability 1", key("q")),
-        bind(B, "Ability 2", key("w")),
-        bind(X, "Ability 3", key("e")),
-        bind(Y, "Ability 4", key("r")),
-        bind(Lb, "Next unit in group", key("tab")),
-        bind(Rb, "Select hero", key("f1")),
+        bind(A, "Select / click", Press::LeftClick),
+        bind(B, "Command / right click", Press::RightClick),
+        bind(X, "Ability 1", key("q")),
+        bind(Y, "Ability 2", key("w")),
+        bind(Rt, "Ability 3", key("e")),
+        bind(Lt, "Ability 4", key("r")),
+        bind(Lb, "Control group 1", key("1")),
+        bind(Rb, "Control group 2", key("2")),
         bind(Start, "Game menu", key("f10")),
         bind(Back, "Cancel", key("escape")),
-        bind(DpadUp, "Control group 1", key("1")),
-        bind(DpadRight, "Control group 2", key("2")),
-        bind(DpadDown, "Control group 3", key("3")),
-        bind(DpadLeft, "Control group 4", key("4")),
+        bind(DpadUp, "Control group 3", key("3")),
+        bind(DpadRight, "Control group 4", key("4")),
+        bind(DpadDown, "Select hero", key("f1")),
+        bind(DpadLeft, "Next unit in group", key("tab")),
         bind(LeftUp, "Camera up", key("up")),
         bind(LeftDown, "Camera down", key("down")),
         bind(LeftLeft, "Camera left", key("left")),
@@ -587,7 +588,7 @@ mod tests {
             ClientMessage::Profile(ProfileChoice::Auto)
         );
         let bindings = ClientMessage::Bindings(any_map_bindings()).line();
-        assert!(bindings.contains("{\"control\":\"rt\",\"action\":\"Select / click\",\"press\":\"left_click\"}"));
+        assert!(bindings.contains("{\"control\":\"a\",\"action\":\"Select / click\",\"press\":\"left_click\"}"));
         assert!(bindings.contains("\"press\":{\"key\":\"q\"}"));
     }
 
