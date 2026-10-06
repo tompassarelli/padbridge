@@ -325,6 +325,18 @@ records its assigned release; `controller_reconnected source=...` identifies
 the recovered event path. Bounded native recovery is recorded in
 smashcraft:evidence/controller-reconnect-native-20261005/README.md.
 
+Each record the helper types is an envelope of about 30 characters around
+its payload, and it types at most 16 records past what the map's receipt says
+it consumed. Warcraft takes typed text into the edit box at a cost that grows
+with how much it takes at once: in 0.0.48's native bot session, the 16 records
+(608 characters) typed after a 2 s stop held the client about 180 ms, and its
+input stayed 15–25 frames late for 5 s
+(smashcraft:evidence/bot-session-0048-native-20261006/). So the helper types
+at most 256 characters past the record the receipt says arrived, and while a
+record waits untyped, the next row packets join it with `|` (at most 16
+packets, the map's `RECORD_PACKETS`): a backlog takes 5–8 characters a frame
+instead of 19.
+
 For Wisp's headless clients, `--text-out FILE` replaces `--editbox-display`
 and the focus arguments: every text the helper would type into the game's
 window (journal envelopes and menu keys) is appended to FILE as one line, and
