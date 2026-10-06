@@ -2709,7 +2709,9 @@ mod linux {
         sender.enqueue("ACK1|1|PREPARE|200".into()).unwrap();
         sender.enqueue(packet(200)).unwrap();
         assert_eq!(sender.queued.records.len(), 6);
-        // Record 1 was typed; the next joined records exceed TYPED_AHEAD_BYTES together.
+        // Record 1 plus the next joined record exceed the cap; receipt credit is required.
+        assert!(sender.text_window.next(&sender.queued, 3, now).unwrap().is_none());
+        sender.text_window.receipt(&mut sender.queued, 1, 0, 1).unwrap();
         let (second, _) = sender.text_window.next(&sender.queued, 3, now).unwrap().unwrap();
         sender.text_window.sent(second, now);
         assert!(ENVELOPE_BYTES + sender.queued.records[1].len() <= TYPED_AHEAD_BYTES);
