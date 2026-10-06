@@ -21,7 +21,7 @@ mod linux {
     #![allow(unsafe_code)]
 
     use crate::focus::Foreground;
-    use crate::stick::{melee_stick, stick_down};
+    use crate::stick::{c_stick, melee_stick, stick_down};
     use enigo::{Direction, Enigo, Key as OutputKey, Keyboard, Settings};
     use evdev::{AbsoluteAxisCode as Abs, EventSummary, KeyCode as Key, raw_stream::RawDevice};
     use std::{
@@ -1942,17 +1942,17 @@ mod linux {
         if y < 0 {
             held |= MOVE_UP;
         }
-        let (cx, cy) = melee_stick(s.cx, s.cy);
-        if cx < -11_000 {
+        let (cx, cy) = c_stick(s.cx, s.cy);
+        if cx < 0 {
             held |= SMASH_LEFT;
         }
-        if cx > 11_000 {
+        if cx > 0 {
             held |= SMASH_RIGHT;
         }
-        if cy < -11_000 {
+        if cy < 0 {
             held |= SMASH_UP;
         }
-        if cy > 11_000 {
+        if cy > 0 {
             held |= SMASH_DOWN;
         }
         if s.lt > 4_000 {
@@ -2294,6 +2294,18 @@ mod linux {
             assert_eq!((edges[&frame].pressed | edges[&frame].released) & JUMP, 0, "step {step}");
         }
         assert_eq!(edges[&frame_at(20_000_000, segment).unwrap()].pressed, MOVE_UP);
+    }
+
+    #[test]
+    fn c_stick_presses_only_at_melees_smash_flick_thresholds() {
+        let held = |cx, cy| action_state(State { cx, cy, ..State::default() });
+        assert_eq!(held(16_384, 0), 0);
+        assert_eq!(held(22_937, 0), 0);
+        assert_eq!(held(26_500, 0), SMASH_RIGHT);
+        assert_eq!(held(-26_500, 0), SMASH_LEFT);
+        assert_eq!(held(0, -19_660), 0);
+        assert_eq!(held(0, -22_937), SMASH_UP);
+        assert_eq!(held(0, 22_937), SMASH_DOWN);
     }
 
     #[test]

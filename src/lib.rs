@@ -10,7 +10,6 @@ use sdl3::{
 };
 use std::collections::BTreeSet;
 
-pub const RIGHT_THRESHOLD: i16 = 11000;
 pub const TRIGGER_THRESHOLD: i16 = 4000;
 
 /// SDL-normalized input, not original device packet values. Buttons use Xbox labels.
@@ -33,10 +32,8 @@ pub struct Sample {
 
 impl Sample {
     pub fn neutral(&self) -> bool {
-        let (right_x, right_y) = stick::melee_stick(self.right_x, self.right_y);
         stick::melee_stick(self.left_x, self.left_y) == (0, 0)
-            && right_x.unsigned_abs() <= RIGHT_THRESHOLD as u16
-            && right_y.unsigned_abs() <= RIGHT_THRESHOLD as u16
+            && stick::c_stick(self.right_x, self.right_y) == (0, 0)
             && self.left_trigger <= TRIGGER_THRESHOLD
             && self.right_trigger <= TRIGGER_THRESHOLD
             && ![self.a, self.b, self.x, self.y, self.lb, self.rb, self.start].contains(&true)
@@ -230,7 +227,7 @@ impl Mapper {
             return Vec::new();
         }
         let (left_x, left_y) = stick::melee_stick(sample.left_x, sample.left_y);
-        let (right_x, right_y) = stick::melee_stick(sample.right_x, sample.right_y);
+        let (right_x, right_y) = stick::c_stick(sample.right_x, sample.right_y);
         // Union source states before diffing, so releasing one source never
         // releases an action another source still owns.
         let bindings = [
@@ -248,10 +245,10 @@ impl Mapper {
             (Action::Right, left_x > 0),
             (Action::Down, stick::stick_down(left_y)),
             (Action::Up, left_y < 0),
-            (Action::CLeft, right_x < -RIGHT_THRESHOLD),
-            (Action::CRight, right_x > RIGHT_THRESHOLD),
-            (Action::CUp, right_y < -RIGHT_THRESHOLD),
-            (Action::CDown, right_y > RIGHT_THRESHOLD),
+            (Action::CLeft, right_x < 0),
+            (Action::CRight, right_x > 0),
+            (Action::CUp, right_y < 0),
+            (Action::CDown, right_y > 0),
         ];
         self.replace(
             bindings
@@ -380,6 +377,31 @@ mod tests {
     }
 
     #[test]
+    fn c_stick_presses_at_melees_smash_flick_thresholds() {
+        let mut map = armed();
+        let stick = |right_x, right_y| Sample {
+            right_x,
+            right_y,
+            ..Sample::default()
+        };
+        // 0.5 and 0.7 sideways are below 0.8; 0.6 and 0.7 vertical straddle 0.6625.
+        assert!(tick(&mut map, &stick(16_384, 0)).is_empty());
+        assert!(tick(&mut map, &stick(22_937, 0)).is_empty());
+        assert!(tick(&mut map, &stick(0, -19_660)).is_empty());
+        assert_eq!(tick(&mut map, &stick(0, -22_937)), vec![edge(Action::CUp, true)]);
+        assert_eq!(
+            tick(&mut map, &stick(0, 22_937)),
+            vec![edge(Action::CUp, false), edge(Action::CDown, true)]
+        );
+        assert_eq!(
+            tick(&mut map, &stick(-27_000, 0)),
+            vec![edge(Action::CDown, false), edge(Action::CLeft, true)]
+        );
+        assert!(stick(22_937, 0).neutral());
+        assert!(!stick(27_000, 0).neutral());
+    }
+
+    #[test]
     fn focus_loss_and_disconnect_release_once_then_require_neutral() {
         for disconnect in [false, true] {
             let mut map = armed();
@@ -428,14 +450,13 @@ mod tests {
             start: true,
             left_x: -20000,
             left_y: 22000,
-            right_x: 20000,
-            right_y: -20000,
+            right_x: 26_500,
             ..Sample::default()
         };
         let keys: BTreeSet<_> = tick(&mut map, &s).iter().map(|t| t.action.key()).collect();
         assert_eq!(
             keys,
-            ['n', 'u', 'o', 'p', 'y', 'w', 'e', 'm', 'j']
+            ['n', 'u', 'o', 'p', 'y', 'w', 'e', 'm']
                 .into_iter()
                 .collect()
         );

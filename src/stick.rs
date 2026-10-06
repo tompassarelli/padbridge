@@ -20,6 +20,28 @@ pub fn stick_down(y: i16) -> bool {
     f32::from(y) >= STICK_DOWN_THRESHOLD * 32_767.0
 }
 
+/// C-stick flick thresholds as fractions of full scale (design targets). Smash
+/// attacks read a sideways flick at 0.8 and up/down at 0.6625; get-up up,
+/// ledge-attack up and the C-stick up jump use 0.6625 and ledge-attack sideways
+/// 0.8. Aerials, throws, side get-up (0.2) and ledge climb (0.25) sit at or under
+/// the 0.28 deadzone, which a single press threshold per direction cannot also
+/// serve.
+pub const C_STICK_SIDE_THRESHOLD: f32 = 0.8;
+pub const C_STICK_VERTICAL_THRESHOLD: f32 = 0.6625;
+
+/// C-stick press directions after Melee's conversion: x is -1 left or +1 right,
+/// y is -1 up or +1 down (positive y is down), 0 inside the threshold.
+pub fn c_stick(x: i16, y: i16) -> (i8, i8) {
+    let (x, y) = melee_stick(x, y);
+    let direction = |v: i16, threshold: f32| {
+        if f32::from(v).abs() >= threshold * 32_767.0 { v.signum() as i8 } else { 0 }
+    };
+    (
+        direction(x, C_STICK_SIDE_THRESHOLD),
+        direction(y, C_STICK_VERTICAL_THRESHOLD),
+    )
+}
+
 /// One stick in full-scale ±32767 units (SDL values and normalized evdev
 /// values), with Melee's radial clamp and axial deadzone applied.
 pub fn melee_stick(x: i16, y: i16) -> (i16, i16) {
@@ -70,4 +92,18 @@ fn down_needs_melees_strong_threshold_and_horizontal_keeps_the_deadzone() {
     assert!(!down(32_767, 16_384), "the radial clamp shrinks a half-down diagonal");
     assert!(down(32_767, 32_767), "a clamped corner is 0.707 down");
     assert_eq!(melee_stick(16_384, 0).0, 16_384, "horizontal is unchanged");
+}
+
+#[cfg(test)]
+#[test]
+fn c_stick_needs_melees_flick_thresholds() {
+    assert_eq!(c_stick(16_384, 0), (0, 0), "0.5 sideways");
+    assert_eq!(c_stick(22_937, 0), (0, 0), "0.7 sideways");
+    assert_eq!(c_stick(26_500, 0), (1, 0), "0.81 right");
+    assert_eq!(c_stick(-26_500, 0), (-1, 0), "0.81 left");
+    assert_eq!(c_stick(0, -19_660), (0, 0), "0.6 up");
+    assert_eq!(c_stick(0, -22_937), (0, -1), "0.7 up");
+    assert_eq!(c_stick(0, 22_937), (0, 1), "0.7 down");
+    // The radial clamp keeps a corner at 0.707 per axis: vertical but not sideways.
+    assert_eq!(c_stick(32_767, 32_767), (0, 1));
 }
