@@ -2088,6 +2088,55 @@ mod linux {
         ((value - info.minimum()).clamp(0, range) * 32_767 / range) as u16
     }
 
+    /// View held this long asks the map to save the last seconds of play.
+    const MOMENT_HOLD_NS: u128 = 1_000_000_000;
+
+    /// View (Back) held for a second: one request per hold to save a moment.
+    #[derive(Default)]
+    struct MomentHold {
+        since_ns: Option<u128>,
+        sent: bool,
+    }
+
+    impl MomentHold {
+        fn observe(&mut self, event: &evdev::InputEvent, event_ns: u128) {
+            let EventSummary::Key(_, Key::BTN_SELECT, value) = event.destructure() else {
+                return;
+            };
+            if value == 0 {
+                self.since_ns = None;
+                self.sent = false;
+            } else if value == 1 && self.since_ns.is_none() {
+                self.since_ns = Some(event_ns);
+            }
+        }
+
+        /// The map's moment request ("JM1" and the epoch in ten digits) once View has been held a second.
+        fn request(&mut self, now_ns: u128, epoch: u32) -> Option<String> {
+            let since = self.since_ns?;
+            if self.sent || now_ns.saturating_sub(since) < MOMENT_HOLD_NS {
+                return None;
+            }
+            self.sent = true;
+            Some(format!("JM1{epoch:010}"))
+        }
+    }
+
+    #[test]
+    fn view_held_a_second_requests_a_moment_once_per_hold() {
+        let down = evdev::InputEvent::new(evdev::EventType::KEY.0, Key::BTN_SELECT.0, 1);
+        let up = evdev::InputEvent::new(evdev::EventType::KEY.0, Key::BTN_SELECT.0, 0);
+        let mut hold = MomentHold::default();
+        hold.observe(&down, 5_000_000_000);
+        assert_eq!(hold.request(5_999_999_999, 7), None);
+        assert_eq!(hold.request(6_000_000_000, 7).as_deref(), Some("JM10000000007"));
+        assert_eq!(hold.request(9_000_000_000, 7), None);
+        hold.observe(&up, 9_100_000_000);
+        assert_eq!(hold.request(10_200_000_000, 7), None);
+        hold.observe(&down, 10_000_000_000);
+        assert_eq!(hold.request(11_000_000_000, 8).as_deref(), Some("JM10000000008"));
+    }
+
     fn pause_request_wire(
         event: &evdev::InputEvent,
         start_held: &mut bool,
@@ -3661,6 +3710,7 @@ mod linux {
         let mut stop_capture = false;
         let mut pause_barrier = None::<u32>;
         let mut pause_request_ns = None::<u128>;
+        let mut moment_hold = MomentHold::default();
         let mut pending = Vec::<String>::new();
         let running = Arc::new(AtomicBool::new(true));
         let signal_running = Arc::clone(&running);
@@ -3818,6 +3868,7 @@ mod linux {
                 let recovery_ready = recovery.ready;
                 recovery.observe(&capture_axes, event);
                 let start_before = start_held;
+                if editbox { moment_hold.observe(&event, event_ns(&event)?); }
                 if editbox {
                     if let Some(wire) = pause_request_wire(
                         &event,
@@ -3858,6 +3909,11 @@ mod linux {
                     }
                 } else {
                     pending_input.push(event, start_before, start_held)?;
+                }
+            }
+            if editbox && !waiting_ready && !waiting_start && !ended {
+                if let Some(wire) = moment_hold.request(monotonic_ns().map_err(|e| e.to_string())?, o.epoch) {
+                    mailbox.as_mut().expect("editbox sender").enqueue(wire).map_err(|error| format!("controller moment request: {error}"))?;
                 }
             }
             let mut start_discard_before_ns = 0;
