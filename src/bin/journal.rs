@@ -545,13 +545,18 @@ mod linux {
             }
             if self.editbox && wire.starts_with("I4") {
                 // A packet joins the last record while nothing of it is typed:
-                // a backlog then costs fewer characters to type.
+                // a backlog then costs fewer characters to type. A joined
+                // record stays within TYPED_AHEAD_BYTES, so typing it after a
+                // receipt keeps the bound too.
                 let last = self.queued.records.len();
                 let untyped = last > 0
                     && self.text_window.consumed as usize + last > self.text_window.highest_sent as usize;
+                let bound = self.text_window.typed_ahead;
                 if untyped
                     && self.queued.records.back().is_some_and(|record| {
-                        record.starts_with("I4") && record.split('|').count() < RECORD_PACKETS
+                        record.starts_with("I4")
+                            && record.split('|').count() < RECORD_PACKETS
+                            && bound.is_none_or(|bound| ENVELOPE_BYTES + record.len() + 1 + wire.len() <= bound)
                     })
                 {
                     return self.queued.join_last(&wire);
@@ -2703,6 +2708,39 @@ mod linux {
         // Once the receipt has the typed ones, the next goes out.
         sender.text_window.receipt(&mut sender.queued, 2, 1, 1).unwrap();
         assert_eq!(sender.text_window.next(&sender.queued, 3, now).unwrap().unwrap().0, 3);
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn a_joined_record_stays_within_the_bytes_typing_may_take_at_once() {
+        let path = env::temp_dir().join(format!("journal-join-bound-{}", std::process::id()));
+        let _ = fs::remove_file(&path);
+        let mut sender = MailboxSender::new(&env::temp_dir(), "join", 3, 0, false, true, Typist::file(&path).unwrap()).unwrap();
+        // Sticks and triggers off center: the longest rows, so 16 packets would be far over TYPED_AHEAD_BYTES.
+        let dense = |first: u32| {
+            let state = State { sources: 1, x: -12_345, y: 23_456, cx: 3_456, cy: -4_567, lt: 30_000, rt: 1_000 };
+            let row = encode_row(state, 0, Edges::default());
+            encode_packet(3, first, &[row.clone(), row])
+        };
+        let now = Instant::now();
+        sender.enqueue(dense(1)).unwrap();
+        let (sequence, _) = sender.text_window.next(&sender.queued, 3, now).unwrap().unwrap();
+        sender.text_window.sent(sequence, now);
+        for first in (3..3 + 2 * 2 * RECORD_PACKETS as u32).step_by(2) {
+            sender.enqueue(dense(first)).unwrap();
+        }
+        let joined: Vec<_> = sender.queued.records.iter().skip(1).collect();
+        assert!(joined.len() > 2, "dense packets join into several records");
+        assert!(joined.iter().all(|record| ENVELOPE_BYTES + record.len() <= TYPED_AHEAD_BYTES));
+        assert!(joined.iter().any(|record| record.split('|').count() > 1));
+        // After the receipt, typing takes at most TYPED_AHEAD_BYTES at once.
+        sender.text_window.receipt(&mut sender.queued, 1, 1, 1).unwrap();
+        let mut typed = 0;
+        while let Some((sequence, envelope)) = sender.text_window.next(&sender.queued, 3, now).unwrap() {
+            typed += envelope.len();
+            sender.text_window.sent(sequence, now);
+        }
+        assert!(typed > 0 && typed <= TYPED_AHEAD_BYTES, "typed {typed}");
         fs::remove_file(path).unwrap();
     }
 
