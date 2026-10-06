@@ -458,6 +458,7 @@ pub fn run(config: &Config, profile: &mut dyn Profile, stop: &AtomicBool, mut re
     let mut running: Option<Running> = None;
     let mut status = Status { profile: profile.name().into(), ..Status::default() };
     let mut known: Option<Game> = None;
+    let mut first = true;
     let mut written = String::new();
     let mut publish = |status: &Status, written: &mut String| {
         let text = status.lines();
@@ -520,11 +521,14 @@ pub fn run(config: &Config, profile: &mut dyn Profile, stop: &AtomicBool, mut re
         if game != known {
             match &game {
                 Some(game) => eprintln!("service: Warcraft III pid={} documents={}", game.pid, game.documents.display()),
-                None if known.is_some() => eprintln!("service: Warcraft III is gone"),
-                None => {}
+                None => eprintln!("service: Warcraft III is gone"),
             }
             known = game.clone();
         }
+        if first && game.is_none() {
+            eprintln!("service: waiting for Warcraft III on {}", config.display);
+        }
+        first = false;
         let pad = find_pad(&config.pads);
         if pad.as_ref().map(|pad| &pad.device) != status.pad.as_ref().map(|pad| &pad.device) {
             match &pad {
