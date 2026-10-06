@@ -472,8 +472,14 @@ fn run() -> Result<(), String> {
             }
         }
         if last_eligibility != Some(eligible) {
+            let reason = gate
+                .as_ref()
+                .and_then(|gate| gate.away())
+                .filter(|_| !eligible)
+                .map(|reason| format!(" reason={reason}"))
+                .unwrap_or_default();
             eprintln!(
-                "t_us={} {}={eligible}",
+                "t_us={} {}={eligible}{reason}",
                 start.elapsed().as_micros(),
                 if o.emit {
                     "game-eligible"

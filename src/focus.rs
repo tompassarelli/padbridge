@@ -3,6 +3,11 @@
 /// identified. Each OS compiles exactly one adapter, exported as `Gate`.
 pub trait Foreground {
     fn eligible(&mut self) -> Result<bool, String>;
+
+    /// Why the last check found the game ineligible, when the adapter can tell.
+    fn away(&self) -> Option<&str> {
+        None
+    }
 }
 
 #[cfg(any(windows, target_os = "macos", test))]
@@ -70,6 +75,7 @@ mod linux {
         birth: String,
         root: u32,
         satellite: Option<Satellite>,
+        away: Option<String>,
     }
 
     struct Satellite {
@@ -165,6 +171,7 @@ mod linux {
                 birth,
                 root,
                 satellite: None,
+                away: None,
             };
             gate.check_window_pid()?;
             if let Some(id) = gate.target.niri_window {
@@ -356,26 +363,47 @@ mod linux {
         }
     }
 
-    impl super::Foreground for Gate {
-        fn eligible(&mut self) -> Result<bool, String> {
+    /// The compositor's view of a window, for diagnostics; titles stay out.
+    fn niri_summary(window: &Value) -> String {
+        if window.is_null() {
+            return "none".into();
+        }
+        let field = |name: &str| window.get(name).map_or("?".into(), Value::to_string);
+        format!(
+            "id={} app_id={} pid={} is_focused={} workspace_id={}",
+            field("id"),
+            field("app_id"),
+            field("pid"),
+            field("is_focused"),
+            field("workspace_id")
+        )
+    }
+
+    impl Gate {
+        fn x11_class(&self, window: u32) -> String {
+            self.text_property(window, b"WM_CLASS")
+                .map_or_else(|_| "?".into(), |class| class.trim_end_matches('\0').replace('\0', "/"))
+        }
+
+        fn away_reason(&mut self) -> Result<Option<String>, String> {
             if process_birth(self.target.pid)? != self.birth {
                 return Err("selected game process restarted".into());
             }
             self.check_window_pid()?;
             if let Some(wlr) = &mut self.wlr {
                 if !wlr.eligible()? {
-                    return Ok(false);
+                    return Ok(Some("wlr-toplevel-inactive".into()));
                 }
             } else {
                 let overview = self.request("OverviewState")?;
                 if overview.get("is_open").and_then(Value::as_bool) != Some(false) {
-                    return Ok(false);
+                    return Ok(Some("niri-overview-open".into()));
                 }
                 let window = self.request("FocusedWindow")?;
                 if window.get("id").and_then(Value::as_u64) != self.target.niri_window
                     || window.get("is_focused").and_then(Value::as_bool) != Some(true)
                 {
-                    return Ok(false);
+                    return Ok(Some(format!("niri-focused {}", niri_summary(&window))));
                 }
                 if self.satellite.is_some() {
                     self.check_satellite()?;
@@ -384,7 +412,7 @@ mod linux {
                         .satellite_window(&windows)?
                         .is_none_or(|selected| selected != &window)
                     {
-                        return Ok(false);
+                        return Ok(Some(format!("niri-window-metadata {}", niri_summary(&window))));
                     }
                     let active =
                         self.word_property(self.root, b"_NET_ACTIVE_WINDOW", AtomEnum::WINDOW)?;
@@ -404,18 +432,33 @@ mod linux {
                     if !pointer.same_screen
                         || !satellite_focus(self.target.window, active, focus, pointer.child)
                     {
-                        return Ok(false);
+                        return Ok(Some(format!(
+                            "x11 target={:#x} active={active:#x}({}) focus={focus:#x}({}) pointer_child={:#x}({}) same_screen={}",
+                            self.target.window,
+                            self.x11_class(active),
+                            self.x11_class(focus),
+                            pointer.child,
+                            self.x11_class(pointer.child),
+                            pointer.same_screen,
+                        )));
                     }
                     // Bracket the X11 observations with current compositor state.
-                    return Ok(self.request("FocusedWindow")? == window
-                        && self
-                            .request("OverviewState")?
-                            .get("is_open")
-                            .and_then(Value::as_bool)
-                            == Some(false));
+                    let after = self.request("FocusedWindow")?;
+                    if after != window {
+                        return Ok(Some(format!("niri-focus-moved {}", niri_summary(&after))));
+                    }
+                    if self
+                        .request("OverviewState")?
+                        .get("is_open")
+                        .and_then(Value::as_bool)
+                        != Some(false)
+                    {
+                        return Ok(Some("niri-overview-open".into()));
+                    }
+                    return Ok(None);
                 }
                 if window.get("pid").and_then(Value::as_u64) != Some(u64::from(self.target.pid)) {
-                    return Ok(false);
+                    return Ok(Some(format!("niri-focused-pid {}", niri_summary(&window))));
                 }
             }
             // Require the exact focus recipient, not stale _NET_ACTIVE_WINDOW metadata.
@@ -424,8 +467,22 @@ mod linux {
                 .get_input_focus()
                 .map_err(|e| e.to_string())?
                 .reply()
-                .map_err(|e| e.to_string())?;
-            Ok(focus.focus == self.target.window)
+                .map_err(|e| e.to_string())?
+                .focus;
+            Ok((focus != self.target.window).then(|| {
+                format!("x11 target={:#x} focus={focus:#x}({})", self.target.window, self.x11_class(focus))
+            }))
+        }
+    }
+
+    impl super::Foreground for Gate {
+        fn eligible(&mut self) -> Result<bool, String> {
+            self.away = self.away_reason()?;
+            Ok(self.away.is_none())
+        }
+
+        fn away(&self) -> Option<&str> {
+            self.away.as_deref()
         }
     }
 
