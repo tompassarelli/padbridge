@@ -363,14 +363,14 @@ fn helper_types_the_layout_only_into_the_focused_game() {
         h.report()
     );
 
-    // #18 layout: A attack, X special, B/Y/stick-up jump, RB grab, either
-    // trigger shield, LB walk, stick directions, Start pause.
+    // #18 layout: A attack, X special, B/Y jump, RB grab, either trigger
+    // shield, LB walk, stick directions (stick-up is only up), Start pause.
     for (press, release, keys) in [
         ("button a 1", "button a 0", vec!["n"]),
         ("button x 1", "button x 0", vec!["u"]),
         ("button b 1", "button b 0", vec!["i"]),
         ("button y 1", "button y 0", vec!["i"]),
-        ("axis lefty -32768", "axis lefty 0", vec!["i", "space"]),
+        ("axis lefty -32768", "axis lefty 0", vec!["space"]),
         (
             "button rightshoulder 1",
             "button rightshoulder 0",
@@ -396,21 +396,14 @@ fn helper_types_the_layout_only_into_the_focused_game() {
         h.step(release, &keys.iter().map(|k| up(k)).collect::<Vec<_>>());
     }
 
-    // All six ordered overlaps of the jump sources keep one held jump.
-    let sources = [
-        ("button b 1", "button b 0", false),
-        ("button y 1", "button y 0", false),
-        ("axis lefty -32768", "axis lefty 0", true),
-    ];
-    for (first, second) in [(0, 1), (1, 0), (0, 2), (2, 0), (1, 2), (2, 1)] {
+    // Both ordered overlaps of the jump buttons keep one held jump.
+    let sources = [("button b 1", "button b 0"), ("button y 1", "button y 0")];
+    for (first, second) in [(0, 1), (1, 0)] {
         let (first, second) = (sources[first], sources[second]);
-        let space = |stick: bool, edge: fn(&str) -> (String, String)| {
-            if stick { vec![edge("space")] } else { vec![] }
-        };
-        h.step(first.0, &[vec![down("i")], space(first.2, down)].concat());
-        h.step(second.0, &space(second.2, down));
-        h.step(first.1, &space(first.2, up));
-        h.step(second.1, &[vec![up("i")], space(second.2, up)].concat());
+        h.step(first.0, &[down("i")]);
+        h.step(second.0, &[]);
+        h.step(first.1, &[]);
+        h.step(second.1, &[up("i")]);
     }
     h.step("axis lefttrigger 32767", &[down("q")]);
     h.step("axis righttrigger 32767", &[]);

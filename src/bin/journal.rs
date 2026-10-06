@@ -6,6 +6,9 @@ mod focus;
 #[cfg(target_os = "linux")]
 #[path = "../wlr.rs"]
 mod wlr;
+#[cfg(target_os = "linux")]
+#[path = "../stick.rs"]
+mod stick;
 
 #[cfg(not(target_os = "linux"))]
 fn main() {
@@ -18,6 +21,7 @@ mod linux {
     #![allow(unsafe_code)]
 
     use crate::focus::Foreground;
+    use crate::stick::melee_stick;
     use enigo::{Direction, Enigo, Key as OutputKey, Keyboard, Settings};
     use evdev::{AbsoluteAxisCode as Abs, EventSummary, KeyCode as Key, raw_stream::RawDevice};
     use std::{
@@ -378,6 +382,13 @@ mod linux {
             }
         }
 
+        fn away(&self) -> Option<&str> {
+            match self {
+                Self::Window { gate, .. } => gate.away(),
+                Self::File(_) => None,
+            }
+        }
+
         fn text(&mut self, text: &str) -> io::Result<()> {
             match self {
                 Self::Window { output, window, .. } => output
@@ -426,7 +437,7 @@ mod linux {
         queued: PendingOutput,
         text_window: TextWindow,
         text_receipt_at: Option<Instant>,
-        lost_focus: bool,
+        focus: FocusGrace,
         current: Option<String>,
         offset: usize,
         next_chunk: u32,
@@ -461,7 +472,7 @@ mod linux {
                 queued: PendingOutput::default(),
                 text_window: TextWindow::default(),
                 text_receipt_at: None,
-                lost_focus: false,
+                focus: FocusGrace::default(),
                 current: None,
                 offset: 0,
                 next_chunk: 1,
@@ -496,10 +507,30 @@ mod linux {
             self.queued.push(wire)
         }
 
+        /// Whether the game has focus now. Typing always requires it.
         fn eligible(&mut self) -> io::Result<bool> {
             let eligible = self.typist.eligible().map_err(io::Error::other)?;
-            self.lost_focus |= !eligible;
+            let now = monotonic_ns()?;
+            match self.focus.observe(eligible, now) {
+                Some(FocusChange::Away) => eprintln!(
+                    "focus_away mono_ns={now} reason={}",
+                    self.typist.away().unwrap_or("unknown")
+                ),
+                Some(FocusChange::Back { away_ns, lost }) => eprintln!(
+                    "focus_back mono_ns={now} away_us={} focus_loss={}",
+                    away_ns / 1_000,
+                    if lost { "released" } else { "blip-input-kept" }
+                ),
+                None => {}
+            }
             Ok(eligible)
+        }
+
+        /// Whether captured input stays armed: focus is here or left less than
+        /// the grace period ago.
+        fn focused(&mut self) -> io::Result<bool> {
+            self.eligible()?;
+            Ok(self.focus.held(monotonic_ns()?))
         }
 
         fn ack_path(&self) -> PathBuf {
@@ -1898,28 +1929,30 @@ mod linux {
         if s.sources & (1 << 5) != 0 {
             held |= GRAB;
         }
-        if s.x < -7_000 {
+        let (x, y) = melee_stick(s.x, s.y);
+        if x < 0 {
             held |= MOVE_LEFT;
         }
-        if s.x > 7_000 {
+        if x > 0 {
             held |= MOVE_RIGHT;
         }
-        if s.y > 7_000 {
+        if y > 0 {
             held |= MOVE_DOWN;
         }
-        if s.y < -7_000 {
-            held |= MOVE_UP | JUMP;
+        if y < 0 {
+            held |= MOVE_UP;
         }
-        if s.cx < -11_000 {
+        let (cx, cy) = melee_stick(s.cx, s.cy);
+        if cx < -11_000 {
             held |= SMASH_LEFT;
         }
-        if s.cx > 11_000 {
+        if cx > 11_000 {
             held |= SMASH_RIGHT;
         }
-        if s.cy < -11_000 {
+        if cy < -11_000 {
             held |= SMASH_UP;
         }
-        if s.cy > 11_000 {
+        if cy > 11_000 {
             held |= SMASH_DOWN;
         }
         if s.lt > 4_000 {
@@ -1950,8 +1983,9 @@ mod linux {
             body.push_str(&compact(pressed, 3));
             body.push_str(&compact(released, 3));
         }
-        let x = axis_byte(state.x);
-        let y = axis_byte((-i32::from(state.y)).clamp(-32_767, 32_767) as i16);
+        let (x, y) = melee_stick(state.x, state.y);
+        let x = axis_byte(x);
+        let y = axis_byte(-y);
         let axes = signed(x) * 255 + signed(y);
         if axes != 0 {
             flags |= 4;
@@ -2149,12 +2183,10 @@ mod linux {
 
     #[test]
     fn journal_jump_sources_retain_hold_until_last_release() {
-        let mut ranges = [None; 6];
-        ranges[Abs::ABS_Y.0 as usize] = Some(evdev::AbsInfo::new(0, -32_767, 32_767, 0, 0, 0));
+        let ranges = [None; 6];
         let sources = [
             (evdev::EventType::KEY.0, Key::BTN_EAST.0, 1),
             (evdev::EventType::KEY.0, Key::BTN_NORTH.0, 1),
-            (evdev::EventType::ABSOLUTE.0, Abs::ABS_Y.0, -32_767),
         ];
         for first in 0..sources.len() {
             for second in 0..sources.len() {
@@ -2189,6 +2221,174 @@ mod linux {
                 assert_eq!(action_state(state), 0);
             }
         }
+    }
+
+    #[test]
+    fn stick_up_is_only_up_and_never_jumps() {
+        let mut ranges = [None; 6];
+        ranges[Abs::ABS_Y.0 as usize] = Some(evdev::AbsInfo::new(0, -32_768, 32_767, 16, 128, 0));
+        let mut state = State::default();
+        let mut edges = BTreeMap::new();
+        let mut snapshots = BTreeMap::new();
+        let segment = FrameSegment { epoch_ns: 0, first_frame: 1 };
+        for (step, value) in [-32_768, -20_000, 0].into_iter().enumerate() {
+            let ns = 20_000_000 * (step as u128 + 1);
+            let event = libc::input_event {
+                time: libc::timeval { tv_sec: 0, tv_usec: (ns / 1000) as _ },
+                type_: evdev::EventType::ABSOLUTE.0,
+                code: Abs::ABS_Y.0,
+                value,
+            }.into();
+            apply_event(&ranges, &mut state, event, &mut edges, &mut snapshots, 1, segment, false).unwrap();
+            let frame = frame_at(ns, segment).unwrap();
+            assert_eq!(action_state(snapshots[&frame]), if value < 0 { MOVE_UP } else { 0 }, "step {step}");
+            assert_eq!((edges[&frame].pressed | edges[&frame].released) & JUMP, 0, "step {step}");
+        }
+        assert_eq!(edges[&frame_at(20_000_000, segment).unwrap()].pressed, MOVE_UP);
+    }
+
+    /// How long focus may be elsewhere before captured input disarms. Focus
+    /// checks have reported the game unfocused for a few milliseconds at a
+    /// time during play; 200 ms (12 frames) is over 30 times the observed
+    /// blip yet shorter than a person switching windows and then pressing a
+    /// pad button. Until it elapses, rows keep their held state and typing
+    /// alone waits for focus.
+    const FOCUS_GRACE_NS: u128 = 200_000_000;
+
+    #[derive(Default)]
+    struct FocusGrace {
+        away_since: Option<u128>,
+        /// A loss of at least the grace period that ended between two
+        /// gameplay focus observations.
+        lost: bool,
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    enum FocusChange {
+        Away,
+        Back { away_ns: u128, lost: bool },
+    }
+
+    impl FocusGrace {
+        fn observe(&mut self, eligible: bool, now: u128) -> Option<FocusChange> {
+            match (eligible, self.away_since) {
+                (false, None) => {
+                    self.away_since = Some(now);
+                    Some(FocusChange::Away)
+                }
+                (true, Some(since)) => {
+                    self.away_since = None;
+                    let away_ns = now.saturating_sub(since);
+                    let lost = away_ns >= FOCUS_GRACE_NS;
+                    self.lost |= lost;
+                    Some(FocusChange::Back { away_ns, lost })
+                }
+                _ => None,
+            }
+        }
+
+        fn held(&self, now: u128) -> bool {
+            self.away_since
+                .is_none_or(|since| now.saturating_sub(since) < FOCUS_GRACE_NS)
+        }
+    }
+
+    /// One main-loop focus observation: returns whether input stays armed and
+    /// whether held controls must be released now.
+    #[cfg(test)]
+    fn observe_focus(grace: &mut FocusGrace, input: &mut FocusInput, eligible: bool, now: u128) -> (bool, bool) {
+        grace.observe(eligible, now);
+        let held = grace.held(now);
+        let lost = std::mem::take(&mut grace.lost);
+        (held, input.observe(held, lost, now))
+    }
+
+    #[cfg(test)]
+    fn timed_stick_x(ns: u128, value: i32) -> evdev::InputEvent {
+        libc::input_event {
+            time: libc::timeval { tv_sec: (ns / 1_000_000_000) as _, tv_usec: ((ns % 1_000_000_000) / 1000) as _ },
+            type_: evdev::EventType::ABSOLUTE.0,
+            code: Abs::ABS_X.0,
+            value,
+        }.into()
+    }
+
+    #[test]
+    fn ten_millisecond_focus_blip_keeps_input_armed_and_held_state() {
+        let mut ranges = [None; 6];
+        ranges[Abs::ABS_X.0 as usize] = Some(evdev::AbsInfo::new(0, -32_768, 32_767, 16, 128, 0));
+        let forward = State { x: 32_767, sources: 1, ..State::default() };
+        let mut input = FocusInput { eligible: true, armed: true, gameplay_armed: true, physical: forward, accept_since_ns: 0 };
+        let mut grace = FocusGrace::default();
+        let state = forward;
+        let row = encode_row(state, action_state(state), Edges::default());
+        let ms = 1_000_000;
+        for t in 1_000..1_030 {
+            let (armed, release) = observe_focus(&mut grace, &mut input, !(1_005..1_015).contains(&t), t * ms);
+            assert!(armed && !release, "t={t} ms");
+            assert!(input.armed && input.gameplay_armed, "t={t} ms");
+        }
+        assert_eq!(grace.observe(true, 1_030 * ms), None);
+        // Input during the blip is captured, not dropped.
+        assert!(input.accepts(&ranges, timed_stick_x(1_010 * ms, 32_767), false, true).unwrap());
+        // Rows keep holding forward with no release and re-press, so the map
+        // sees no new dash.
+        assert_eq!(encode_row(state, action_state(state), Edges::default()), row);
+        assert_ne!(action_state(state) & MOVE_RIGHT, 0);
+    }
+
+    #[test]
+    fn half_second_focus_loss_releases_once_and_requires_neutral() {
+        let mut ranges = [None; 6];
+        ranges[Abs::ABS_X.0 as usize] = Some(evdev::AbsInfo::new(0, -32_768, 32_767, 16, 128, 0));
+        let forward = State { x: 32_767, sources: 1, ..State::default() };
+        let mut input = FocusInput { eligible: true, armed: true, gameplay_armed: true, physical: forward, accept_since_ns: 0 };
+        let mut grace = FocusGrace::default();
+        let mut state = forward;
+        let mut edges = BTreeMap::new();
+        let mut snapshots = BTreeMap::new();
+        let segment = FrameSegment { epoch_ns: 0, first_frame: 1 };
+        let ms = 1_000_000;
+        let mut released = Vec::new();
+        for t in 1_000..1_500 {
+            let (_, release) = observe_focus(&mut grace, &mut input, false, t * ms);
+            if release {
+                released.push(t);
+                let frame = release_for_focus_loss(&mut state, &mut edges, &mut snapshots, 1, segment, t * ms).unwrap();
+                // The map receives a neutral row at the release frame.
+                let row = encode_row(snapshots[&frame], action_state(forward), edges[&frame]);
+                assert_eq!(&row[..1], "2", "release row holds nothing and has centred axes: {row}");
+                assert_eq!(edges[&frame].released & (MOVE_RIGHT | ATTACK), MOVE_RIGHT | ATTACK);
+            }
+        }
+        assert_eq!(released, [1_200]);
+        assert_eq!(state, State::default());
+        assert!(!input.armed);
+        assert_eq!(grace.observe(true, 1_500 * ms), Some(FocusChange::Back { away_ns: 500 * ms, lost: true }));
+        let (armed, release) = observe_focus(&mut grace, &mut input, true, 1_500 * ms);
+        assert!(armed && !release);
+        // The stick is still forward: nothing re-arms or resends it.
+        assert!(!input.accepts(&ranges, timed_stick_x(1_510 * ms, 32_767), false, true).unwrap());
+        input.rearm(1_515 * ms, false, true);
+        assert!(!input.armed);
+        assert_eq!(state, State::default());
+        // Neutral re-arms; the next push is a genuine new press.
+        assert!(!input.accepts(&ranges, timed_button(1_518 * ms, false), false, true).unwrap());
+        assert!(!input.armed);
+        assert!(!input.accepts(&ranges, timed_stick_x(1_520 * ms, 0), false, true).unwrap());
+        assert!(input.armed);
+        assert!(input.accepts(&ranges, timed_stick_x(1_530 * ms, 32_767), false, true).unwrap());
+    }
+
+    #[test]
+    fn a_long_loss_between_gameplay_observations_still_releases() {
+        let mut grace = FocusGrace::default();
+        let mut input = FocusInput { eligible: true, armed: true, gameplay_armed: true, physical: State { sources: 1, ..State::default() }, accept_since_ns: 0 };
+        // Typing saw the loss; the gameplay loop next looks after focus returned.
+        grace.observe(false, 1_000_000_000);
+        grace.observe(true, 1_300_000_000);
+        assert_eq!(observe_focus(&mut grace, &mut input, true, 1_301_000_000), (true, true));
+        assert!(!input.armed);
     }
 
     struct FocusInput {
@@ -2751,12 +2951,14 @@ mod linux {
         e.pressed |= edge.pressed;
         e.released |= edge.released;
         if edge.pressed & SPECIAL != 0 && !special_pending {
-            e.special_x = i16::from(state.x.unsigned_abs() > 7_000) * state.x.signum();
-            e.special_y = -i16::from(state.y.unsigned_abs() > 7_000) * state.y.signum();
+            let (x, y) = melee_stick(state.x, state.y);
+            e.special_x = x.signum();
+            e.special_y = -y.signum();
         }
         if edge.pressed & (LEFT_TRIGGER | RIGHT_TRIGGER) != 0 {
-            e.dodge_x = i16::from(state.x.unsigned_abs() > 7_000) * state.x.signum();
-            e.dodge_y = -i16::from(state.y.unsigned_abs() > 7_000) * state.y.signum();
+            let (x, y) = melee_stick(state.x, state.y);
+            e.dodge_x = x.signum();
+            e.dodge_y = -y.signum();
         }
         if edge.pressed & MOVE_UP != 0 {
             e.ledge = 1;
@@ -3025,6 +3227,75 @@ mod linux {
         fs::remove_dir(dir).unwrap();
     }
 
+    /// How a pad's driver names its face buttons. The capture keys on
+    /// positions (BTN_SOUTH/EAST/NORTH/WEST). Linux drivers disagree: Sony's
+    /// hid-playstation reports positions, while xpad and other Xbox-style
+    /// drivers report labels, BTN_X (0x133, the code of BTN_NORTH) for the
+    /// left button and BTN_Y (0x134, BTN_WEST) for the top one. SDL decides
+    /// by vendor in its Linux joystick mapping; wc3-controller reads SDL's
+    /// positions, so both helpers resolve every pad the same way.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum FaceLabels {
+        Positions,
+        Xbox,
+    }
+
+    const SONY_VENDOR: u16 = 0x054c;
+
+    impl FaceLabels {
+        fn of(id: evdev::InputId) -> Self {
+            if id.vendor() == SONY_VENDOR { Self::Positions } else { Self::Xbox }
+        }
+
+        fn position(self, code: u16) -> u16 {
+            match (self, code) {
+                (Self::Xbox, 0x133) => Key::BTN_WEST.0,
+                (Self::Xbox, 0x134) => Key::BTN_NORTH.0,
+                _ => code,
+            }
+        }
+
+        fn positional(self, event: evdev::InputEvent) -> evdev::InputEvent {
+            if event.event_type() != evdev::EventType::KEY {
+                return event;
+            }
+            let mut raw: libc::input_event = event.into();
+            raw.code = self.position(raw.code);
+            raw.into()
+        }
+    }
+
+    #[test]
+    fn xbox_face_labels_map_x_to_special_and_y_to_jump() {
+        // Codes exactly as the kernel's xpad driver reports a wired Xbox One S
+        // pad (045e:02ea): A BTN_A, B BTN_B, X BTN_X, Y BTN_Y.
+        let xbox = FaceLabels::of(evdev::InputId::new(evdev::BusType::BUS_USB, 0x045e, 0x02ea, 0x0301));
+        assert_eq!(xbox, FaceLabels::Xbox);
+        let ranges = [None; 6];
+        let held = |code: u16| {
+            let mut state = State::default();
+            let event = libc::input_event {
+                time: libc::timeval { tv_sec: 1, tv_usec: 5 },
+                type_: evdev::EventType::KEY.0,
+                code,
+                value: 1,
+            };
+            let positional = xbox.positional(event.into());
+            assert_eq!(event_ns(&positional).unwrap(), 1_000_005_000);
+            update_state(&ranges, &mut state, positional);
+            action_state(state)
+        };
+        // BTN_A, BTN_B, BTN_X and BTN_Y in linux/input-event-codes.h.
+        assert_eq!(held(0x130), ATTACK);
+        assert_eq!(held(0x131), JUMP);
+        assert_eq!(held(0x133), SPECIAL);
+        assert_eq!(held(0x134), JUMP);
+        // hid-playstation reports positions: square BTN_WEST, triangle BTN_NORTH.
+        let sony = FaceLabels::of(evdev::InputId::new(evdev::BusType::BUS_USB, SONY_VENDOR, 0x0ce6, 0x8111));
+        assert_eq!(sony.position(Key::BTN_WEST.0), Key::BTN_WEST.0);
+        assert_eq!(sony.position(Key::BTN_NORTH.0), Key::BTN_NORTH.0);
+    }
+
     #[derive(Debug, PartialEq, Eq)]
     struct DeviceIdentity {
         id: evdev::InputId,
@@ -3249,6 +3520,7 @@ mod linux {
             }
         }
         let key_state = device.get_key_state()?;
+        let labels = FaceLabels::of(device.input_id());
         let axis_value = |code: Abs| axes[code.0 as usize].map_or(0, |info| info.value());
         let mut state = State {
             x: normalized_axis(&axes, Abs::ABS_X, axis_value(Abs::ABS_X)),
@@ -3261,7 +3533,7 @@ mod linux {
         };
         for key in [Key::BTN_SOUTH, Key::BTN_EAST, Key::BTN_WEST, Key::BTN_NORTH, Key::BTN_TL, Key::BTN_TR] {
             if key_state.contains(key) {
-                update_state(&axes, &mut state, evdev::InputEvent::new(evdev::EventType::KEY.0, key.0, 1));
+                update_state(&axes, &mut state, evdev::InputEvent::new(evdev::EventType::KEY.0, labels.position(key.0), 1));
             }
         }
         Ok((axes, state, key_state.contains(Key::BTN_START)))
@@ -3321,9 +3593,10 @@ mod linux {
         let mut capture_axes = axes;
         let mut state = State::default();
         let identity = DeviceIdentity::of(&device);
+        let labels = FaceLabels::of(device.input_id());
         let can_reconnect = identity.reconnectable()
             && matching_devices(&identity).map_err(|e| format!("enumerate controller identity: {e}"))?.len() == 1;
-        eprintln!("controller_identity={identity:?} automatic_reconnect={can_reconnect}");
+        eprintln!("controller_identity={identity:?} face_labels={labels:?} automatic_reconnect={can_reconnect}");
         let mut device = Some(device);
         let mut next_reconnect = Instant::now();
         let mut ambiguous = false;
@@ -3418,13 +3691,13 @@ mod linux {
             let before_armed = (focus_input.armed, focus_input.gameplay_armed);
             let eligible = mailbox
                 .as_mut()
-                .map(MailboxSender::eligible)
+                .map(MailboxSender::focused)
                 .transpose()
                 .map_err(|error| format!("journal focus: {error}"))?
                 .unwrap_or(true) && mailbox.as_ref().is_none_or(|sender| sender.chat_state == 0);
             let lost = mailbox
                 .as_mut()
-                .is_some_and(|sender| std::mem::take(&mut sender.lost_focus));
+                .is_some_and(|sender| std::mem::take(&mut sender.focus.lost));
             let focus_now = monotonic_ns().map_err(|e| e.to_string())?;
             let changed = focus_input.eligible != eligible;
             if focus_input.observe(eligible, lost, focus_now) && !paused && !stop_capture && !waiting_ready && !waiting_start {
@@ -3488,7 +3761,7 @@ mod linux {
                     }
                 }
             }
-            let read = device.as_mut().map(|device| device.fetch_events().map(|events| events.collect::<Vec<_>>()));
+            let read = device.as_mut().map(|device| device.fetch_events().map(|events| events.map(|event| labels.positional(event)).collect::<Vec<_>>()));
             let events = match read {
                 Some(Ok(events)) => events,
                 None => Vec::new(),

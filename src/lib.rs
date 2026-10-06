@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 pub mod output;
+pub mod stick;
 
 use sdl3::{
     event::Event,
@@ -9,7 +10,6 @@ use sdl3::{
 };
 use std::collections::BTreeSet;
 
-pub const LEFT_THRESHOLD: i16 = 7000;
 pub const RIGHT_THRESHOLD: i16 = 11000;
 pub const TRIGGER_THRESHOLD: i16 = 4000;
 
@@ -33,10 +33,10 @@ pub struct Sample {
 
 impl Sample {
     pub fn neutral(&self) -> bool {
-        self.left_x.unsigned_abs() <= LEFT_THRESHOLD as u16
-            && self.left_y.unsigned_abs() <= LEFT_THRESHOLD as u16
-            && self.right_x.unsigned_abs() <= RIGHT_THRESHOLD as u16
-            && self.right_y.unsigned_abs() <= RIGHT_THRESHOLD as u16
+        let (right_x, right_y) = stick::melee_stick(self.right_x, self.right_y);
+        stick::melee_stick(self.left_x, self.left_y) == (0, 0)
+            && right_x.unsigned_abs() <= RIGHT_THRESHOLD as u16
+            && right_y.unsigned_abs() <= RIGHT_THRESHOLD as u16
             && self.left_trigger <= TRIGGER_THRESHOLD
             && self.right_trigger <= TRIGGER_THRESHOLD
             && ![self.a, self.b, self.x, self.y, self.lb, self.rb, self.start].contains(&true)
@@ -229,13 +229,14 @@ impl Mapper {
             self.armed = sample.neutral();
             return Vec::new();
         }
-        let up = sample.left_y < -LEFT_THRESHOLD;
+        let (left_x, left_y) = stick::melee_stick(sample.left_x, sample.left_y);
+        let (right_x, right_y) = stick::melee_stick(sample.right_x, sample.right_y);
         // Union source states before diffing, so releasing one source never
         // releases an action another source still owns.
         let bindings = [
             (Action::Attack, sample.a),
             (Action::Special, sample.x),
-            (Action::Jump, sample.b || sample.y || up),
+            (Action::Jump, sample.b || sample.y),
             (Action::Grab, sample.rb),
             (
                 Action::Shield,
@@ -243,14 +244,14 @@ impl Mapper {
             ),
             (Action::Walk, sample.lb),
             (Action::Start, sample.start),
-            (Action::Left, sample.left_x < -LEFT_THRESHOLD),
-            (Action::Right, sample.left_x > LEFT_THRESHOLD),
-            (Action::Down, sample.left_y > LEFT_THRESHOLD),
-            (Action::Up, up),
-            (Action::CLeft, sample.right_x < -RIGHT_THRESHOLD),
-            (Action::CRight, sample.right_x > RIGHT_THRESHOLD),
-            (Action::CUp, sample.right_y < -RIGHT_THRESHOLD),
-            (Action::CDown, sample.right_y > RIGHT_THRESHOLD),
+            (Action::Left, left_x < 0),
+            (Action::Right, left_x > 0),
+            (Action::Down, left_y > 0),
+            (Action::Up, left_y < 0),
+            (Action::CLeft, right_x < -RIGHT_THRESHOLD),
+            (Action::CRight, right_x > RIGHT_THRESHOLD),
+            (Action::CUp, right_y < -RIGHT_THRESHOLD),
+            (Action::CDown, right_y > RIGHT_THRESHOLD),
         ];
         self.replace(
             bindings
@@ -311,7 +312,7 @@ mod tests {
     }
 
     #[test]
-    fn jump_buttons_and_stick_up_share_one_held_action() {
+    fn jump_buttons_share_one_held_jump_and_stick_up_is_only_up() {
         let mut map = armed();
         let mut s = Sample {
             b: true,
@@ -326,17 +327,29 @@ mod tests {
         s.b = false;
         assert!(tick(&mut map, &s).is_empty());
         s.y = false;
-        assert!(tick(&mut map, &s).is_empty());
+        assert_eq!(tick(&mut map, &s), vec![edge(Action::Jump, false)]);
         s.left_y = 0;
-        assert_eq!(
-            tick(&mut map, &s),
-            vec![edge(Action::Jump, false), edge(Action::Up, false)]
-        );
-        s.left_y = -20000;
-        assert_eq!(
-            tick(&mut map, &s),
-            vec![edge(Action::Jump, true), edge(Action::Up, true)]
-        );
+        assert_eq!(tick(&mut map, &s), vec![edge(Action::Up, false)]);
+        s.left_y = i16::MIN;
+        assert_eq!(tick(&mut map, &s), vec![edge(Action::Up, true)]);
+    }
+
+    #[test]
+    fn drifted_stick_inside_melee_deadzone_is_neutral_and_just_outside_moves() {
+        let mut map = armed();
+        let drift = Sample {
+            left_x: 9_174,
+            left_y: -9_174,
+            ..Sample::default()
+        };
+        assert!(drift.neutral());
+        assert!(tick(&mut map, &drift).is_empty());
+        let outside = Sample {
+            left_x: 9_175,
+            ..Sample::default()
+        };
+        assert!(!outside.neutral());
+        assert_eq!(tick(&mut map, &outside), vec![edge(Action::Right, true)]);
     }
 
     #[test]
