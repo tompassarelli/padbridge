@@ -28,7 +28,7 @@ For this NixOS workstation, the observed build environment is:
 ```sh
 nix-shell -p bun stdenv.cc cmake pkg-config libxkbcommon udev
 export PATH="$HOME/.rustup/toolchains/1.96.1-x86_64-unknown-linux-gnu/bin:$PATH"
-bun ~/.codex/skills/machine-capacity-distilled/scripts/machine-capacity.mjs run \
+bun ~/.codex/skills/machine-capacity/scripts/machine-capacity.mjs run \
   --class moderate --owner codex:controller-build --timeout-seconds 900 -- \
   cargo build --locked --jobs 2
 ```
