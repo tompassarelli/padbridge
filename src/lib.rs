@@ -246,7 +246,7 @@ impl Mapper {
             (Action::Start, sample.start),
             (Action::Left, left_x < 0),
             (Action::Right, left_x > 0),
-            (Action::Down, left_y > 0),
+            (Action::Down, stick::stick_down(left_y)),
             (Action::Up, left_y < 0),
             (Action::CLeft, right_x < -RIGHT_THRESHOLD),
             (Action::CRight, right_x > RIGHT_THRESHOLD),
@@ -353,6 +353,33 @@ mod tests {
     }
 
     #[test]
+    fn down_needs_melees_strong_threshold_while_other_directions_keep_the_deadzone() {
+        let mut map = armed();
+        let stick = |left_x, left_y| Sample {
+            left_x,
+            left_y,
+            ..Sample::default()
+        };
+        assert!(tick(&mut map, &stick(0, 16_384)).is_empty());
+        assert_eq!(
+            tick(&mut map, &stick(0, 22_937)),
+            vec![edge(Action::Down, true)]
+        );
+        assert_eq!(
+            tick(&mut map, &stick(0, 16_384)),
+            vec![edge(Action::Down, false)]
+        );
+        assert_eq!(
+            tick(&mut map, &stick(16_384, 0)),
+            vec![edge(Action::Right, true)]
+        );
+        assert_eq!(
+            tick(&mut map, &stick(0, -16_384)),
+            vec![edge(Action::Right, false), edge(Action::Up, true)]
+        );
+    }
+
+    #[test]
     fn focus_loss_and_disconnect_release_once_then_require_neutral() {
         for disconnect in [false, true] {
             let mut map = armed();
@@ -400,7 +427,7 @@ mod tests {
             lb: true,
             start: true,
             left_x: -20000,
-            left_y: 20000,
+            left_y: 22000,
             right_x: 20000,
             right_y: -20000,
             ..Sample::default()

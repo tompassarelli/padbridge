@@ -78,13 +78,27 @@ to full scale, as Melee does at its 80-unit full scale. Each axis whose magnitud
 **0.28** of full scale reads 0; a value outside it is kept, not rescaled.
 Full scale is SDL's and the normalized evdev range, ±32767, standing in for
 Melee's 80 units, so a left-stick axis counts from 9175. No resting-offset
-calibration is applied; the deadzone absorbs a pad's resting offset. A left-stick
-direction is active when its axis is outside the deadzone, and the journal's
-rows carry the deadzoned axes. Right-stick directions additionally need 11000
+calibration is applied; the deadzone absorbs a pad's resting offset. Left,
+right and up are active when their axis is outside the deadzone; down needs
+the stronger threshold below. The journal's rows carry the deadzoned axes. Right-stick directions additionally need 11000
 and triggers 4000, strictly beyond. Shared sources are unioned before emission:
 releasing LT while RT is held retains shield; B and Y share one held jump
 action. Stick-up is only up: aim, up-special, getup and ledge stand. Hold
 duration remains available to the game's jump logic.
+
+Down is active only at **0.6625** of full scale (53 of Melee's 80 units; a
+left-stick axis counts from 21709), after the radial clamp. Melee has no single
+down threshold; our design targets are: fast-fall, platform drop,
+ledge-catch refusal and down smash at 0.6625 (0.66 for the platform drop and
+ledge catch, the same 53 units); crouch (0.6875, strict, 56 units) and spot dodge
+(0.7) need slightly more.
+The single digital down (E) takes the 53-unit value shared by four of those
+six actions, so a slight tilt no longer fast-falls, drops through a platform or
+passes a ledge. Crouch and spot dodge trigger about three stick units early.
+Up keeps the deadzone: ledge climb 0.25 and getup 0.2 lie
+inside it, and the 0.6625 up actions (tap jump, up smash) are not served by
+digital up. Up-special (0.55) and the direction sent with a special or
+dodge press still use the deadzone, as does the journal's analog axis.
 
 On Linux the journal reads face buttons by position. Sony's driver reports
 positions, but xpad and other Xbox-style drivers report labels: X as `BTN_X`

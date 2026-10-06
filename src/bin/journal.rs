@@ -21,7 +21,7 @@ mod linux {
     #![allow(unsafe_code)]
 
     use crate::focus::Foreground;
-    use crate::stick::melee_stick;
+    use crate::stick::{melee_stick, stick_down};
     use enigo::{Direction, Enigo, Key as OutputKey, Keyboard, Settings};
     use evdev::{AbsoluteAxisCode as Abs, EventSummary, KeyCode as Key, raw_stream::RawDevice};
     use std::{
@@ -1936,7 +1936,7 @@ mod linux {
         if x > 0 {
             held |= MOVE_RIGHT;
         }
-        if y > 0 {
+        if stick_down(y) {
             held |= MOVE_DOWN;
         }
         if y < 0 {
@@ -2245,6 +2245,34 @@ mod linux {
             assert_eq!((edges[&frame].pressed | edges[&frame].released) & JUMP, 0, "step {step}");
         }
         assert_eq!(edges[&frame_at(20_000_000, segment).unwrap()].pressed, MOVE_UP);
+    }
+
+    #[test]
+    fn stick_down_is_reported_only_at_melees_strong_threshold() {
+        let mut ranges = [None; 6];
+        ranges[Abs::ABS_Y.0 as usize] = Some(evdev::AbsInfo::new(0, -32_768, 32_767, 16, 128, 0));
+        let mut state = State::default();
+        let mut edges = BTreeMap::new();
+        let mut snapshots = BTreeMap::new();
+        let segment = FrameSegment { epoch_ns: 0, first_frame: 1 };
+        // Positive evdev y is down: 16384 is half, 22937 is 0.7, 9000 is inside the deadzone.
+        let steps = [(16_384, 0), (22_937, MOVE_DOWN), (16_384, 0), (32_767, MOVE_DOWN), (9_000, 0)];
+        for (step, (value, held)) in steps.into_iter().enumerate() {
+            let ns = 20_000_000 * (step as u128 + 1);
+            let event = libc::input_event {
+                time: libc::timeval { tv_sec: 0, tv_usec: (ns / 1000) as _ },
+                type_: evdev::EventType::ABSOLUTE.0,
+                code: Abs::ABS_Y.0,
+                value,
+            }.into();
+            apply_event(&ranges, &mut state, event, &mut edges, &mut snapshots, 1, segment, false).unwrap();
+            let frame = frame_at(ns, segment).unwrap();
+            assert_eq!(action_state(snapshots[&frame]), held, "step {step}");
+            let edge = edges.get(&frame).map_or((0, 0), |e| (e.pressed, e.released));
+            let expected = match step { 1 | 3 => (MOVE_DOWN, 0), 2 | 4 => (0, MOVE_DOWN), _ => (0, 0) };
+            assert_eq!(edge, expected, "step {step}");
+        }
+        assert_eq!(edges[&frame_at(40_000_000, segment).unwrap()].ledge, -1);
     }
 
     /// How long focus may be elsewhere before captured input disarms. Focus
