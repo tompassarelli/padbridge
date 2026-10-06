@@ -1,9 +1,16 @@
 //! Windows/macOS end-to-end check of the real helper (`--features e2e`, needs a
-//! desktop session). wc3-controller drives an SDL virtual gamepad and must type
-//! the #18 layout only into a focused stand-in whose executable is named like
+//! desktop session). A scripted pad drives wc3-controller, which must type the
+//! #18 layout only into a focused stand-in whose executable is named like
 //! Warcraft III. Stand-ins record what their windows receive; the operating
 //! system's key state shows whether the helper released what it pressed, since
 //! SDL hides key-ups in a window that lost focus or never saw the press.
+//!
+//! The simulated layer differs by OS:
+//! - Windows: a ViGEmBus virtual DualShock 4 (driver installed by CI). The
+//!   helper reads it through its normal SDL hardware path, as a physical pad.
+//! - macOS: virtual HID devices need an Apple-restricted entitlement, so the
+//!   helper's own `--virtual-pad` (an SDL virtual gamepad inside the helper)
+//!   replaces device acquisition; everything after SDL's gamepad events is real.
 #![cfg(all(feature = "e2e", any(windows, target_os = "macos")))]
 
 use std::{
@@ -218,10 +225,142 @@ mod os {
     }
 }
 
+/// Pad commands use SDL's control names and raw joystick units (stick y is
+/// positive down; triggers rest at -32768): `button NAME 0|1`, `axis NAME RAW`,
+/// `detach`.
+#[cfg(target_os = "macos")]
+mod pad {
+    use super::Process;
+
+    pub const HELPER_ARGS: &[&str] = &["--virtual-pad"];
+    pub const NAME: &str = "Smashcraft virtual pad";
+
+    /// The helper's stdin drives its in-process SDL virtual gamepad.
+    pub struct Pad;
+
+    impl Pad {
+        pub fn connect() -> Self {
+            Self
+        }
+
+        pub fn send(&mut self, helper: &mut Process, command: &str) {
+            helper.send(command);
+        }
+    }
+}
+
+#[cfg(windows)]
+mod pad {
+    use super::{Duration, Instant, Process, WAIT, thread};
+    use vigem_client::{Client, DS4Report, DualShock4Wired, Error, TargetId};
+
+    pub const HELPER_ARGS: &[&str] = &[];
+    pub const NAME: &str = "PS4 Controller";
+
+    /// A ViGEmBus virtual DualShock 4, seen by Windows as a USB HID pad. The
+    /// Xbox 360 target needs xusb22.sys, which Windows Server runners lack.
+    pub struct Pad {
+        target: DualShock4Wired<Client>,
+        report: DS4Report,
+    }
+
+    /// Raw SDL joystick units to the report's 0..255 (128 rest, y down).
+    fn byte(value: i16) -> u8 {
+        ((i32::from(value) + 32768) >> 8) as u8
+    }
+
+    impl Pad {
+        pub fn connect() -> Self {
+            let client = Client::connect().expect("connect to ViGEmBus");
+            let mut target = DualShock4Wired::new(client, TargetId::DUALSHOCK4_WIRED);
+            target.plugin().expect("plug in virtual pad");
+            target.wait_ready().expect("virtual pad ready");
+            let mut pad = Self {
+                target,
+                report: DS4Report::default(),
+            };
+            pad.submit();
+            pad
+        }
+
+        pub fn send(&mut self, _helper: &mut Process, command: &str) {
+            // DualShock 4 report button bits; the low nibble is the d-pad.
+            const SQUARE: u16 = 1 << 4;
+            const CROSS: u16 = 1 << 5;
+            const CIRCLE: u16 = 1 << 6;
+            const TRIANGLE: u16 = 1 << 7;
+            const L1: u16 = 1 << 8;
+            const R1: u16 = 1 << 9;
+            const L2: u16 = 1 << 10;
+            const R2: u16 = 1 << 11;
+            const OPTIONS: u16 = 1 << 13;
+            let set = |buttons: &mut u16, bit: u16, on: bool| {
+                *buttons = if on { *buttons | bit } else { *buttons & !bit };
+            };
+            let words: Vec<_> = command.split_whitespace().collect();
+            let r = &mut self.report;
+            match words.as_slice() {
+                ["detach"] => return self.target.unplug().expect("unplug virtual pad"),
+                ["button", name, value] => {
+                    let bit = match *name {
+                        "a" => CROSS,
+                        "b" => CIRCLE,
+                        "x" => SQUARE,
+                        "y" => TRIANGLE,
+                        "start" => OPTIONS,
+                        "leftshoulder" => L1,
+                        "rightshoulder" => R1,
+                        _ => panic!("no virtual button {name}"),
+                    };
+                    set(&mut r.buttons, bit, *value == "1");
+                }
+                ["axis", name, value] => {
+                    let value: i16 = value.parse().expect("axis value");
+                    match *name {
+                        "leftx" => r.thumb_lx = byte(value),
+                        "lefty" => r.thumb_ly = byte(value),
+                        "rightx" => r.thumb_rx = byte(value),
+                        "righty" => r.thumb_ry = byte(value),
+                        "lefttrigger" => {
+                            r.trigger_l = byte(value);
+                            set(&mut r.buttons, L2, value > 0);
+                        }
+                        "righttrigger" => {
+                            r.trigger_r = byte(value);
+                            set(&mut r.buttons, R2, value > 0);
+                        }
+                        _ => panic!("no virtual axis {name}"),
+                    }
+                }
+                _ => panic!("unknown pad command {command:?}"),
+            }
+            self.submit();
+        }
+
+        /// The bus delivers a report only into a pending USB read, so it
+        /// refuses one (ERROR_NO_MORE_ITEMS) until Windows' HID stack reads.
+        fn submit(&mut self) {
+            let start = Instant::now();
+            loop {
+                match self.target.update(&self.report) {
+                    Ok(()) => return,
+                    Err(Error::WinError(259)) if start.elapsed() < WAIT => {
+                        thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(error) => panic!("send pad report: {error:?}"),
+                }
+            }
+        }
+    }
+}
+
 struct Harness {
     helper: Process,
+    pad: pad::Pad,
     game: Standin,
     other: Standin,
+    /// Every key the game window must have received, in order.
+    expected: Vec<(String, String)>,
 }
 
 fn key(kind: &str, name: &str) -> (String, String) {
@@ -292,7 +431,8 @@ impl Harness {
             self.other.keys().len(),
             self.events(),
         );
-        self.helper.send(command);
+        self.pad.send(&mut self.helper, command);
+        self.expected.extend_from_slice(expected);
         self.wait(&format!("helper to observe {command:?}"), |h| {
             h.events() > events
         });
@@ -320,6 +460,7 @@ impl Harness {
     }
 
     fn focus_game(&mut self, game: bool) {
+        let before = self.game.keys().len();
         let (target, label) = if game {
             (&mut self.game, "game")
         } else {
@@ -330,6 +471,27 @@ impl Harness {
         self.wait(&format!("{label} window focus"), |h| {
             h.game.focused() == game && h.other.focused() != game
         });
+        // SDL may release a window's held keys itself when it loses focus; only
+        // a release of a key the game holds, at most once, is allowed here.
+        let mut held = Vec::new();
+        for (kind, key) in &self.expected {
+            if kind == "key_down" {
+                held.push(key.clone());
+            } else {
+                held.retain(|k| k != key);
+            }
+        }
+        let keys = self.game.keys();
+        for (kind, key) in &keys[before..] {
+            let index = held.iter().position(|k| k == key);
+            assert!(
+                kind == "key_up" && index.is_some(),
+                "game window received {kind} {key} on focus change{}",
+                self.report()
+            );
+            held.remove(index.unwrap());
+        }
+        self.expected.extend_from_slice(&keys[before..]);
     }
 }
 
@@ -339,14 +501,17 @@ fn helper_types_the_layout_only_into_the_focused_game() {
     std::fs::create_dir_all(&dir).unwrap();
     let game = Standin::launch(&dir, "Warcraft III");
     let other = Standin::launch(&dir, "Other");
-    let helper = Process::spawn(
-        Path::new(HELPER),
-        &["--virtual-pad", "--emit", "--watch-seconds", "600"],
-    );
+    // The helper watches exactly one pad, so it must exist before the helper starts.
+    let pad = pad::Pad::connect();
+    let mut args = pad::HELPER_ARGS.to_vec();
+    args.extend(["--emit", "--watch-seconds", "600"]);
+    let helper = Process::spawn(Path::new(HELPER), &args);
     let mut h = Harness {
         helper,
+        pad,
         game,
         other,
+        expected: Vec::new(),
     };
     h.focus_game(true);
     h.wait("helper eligibility", |h| h.eligible() == Some(true));
@@ -358,13 +523,14 @@ fn helper_types_the_layout_only_into_the_focused_game() {
             && h.helper
                 .stderr()
                 .iter()
-                .any(|line| line.contains("Smashcraft virtual pad")),
-        "helper did not select the virtual pad{}",
+                .any(|line| line.starts_with("gamepad id=") && line.contains(pad::NAME)),
+        "helper did not select the simulated pad{}",
         h.report()
     );
 
     // #18 layout: A attack, X special, B/Y jump, RB grab, either trigger
-    // shield, LB walk, stick directions (stick-up is only up), Start pause.
+    // shield, LB walk, stick directions (stick-up is only up), Start pause,
+    // and the right stick's four C-stick directions.
     for (press, release, keys) in [
         ("button a 1", "button a 0", vec!["n"]),
         ("button x 1", "button x 0", vec!["u"]),
@@ -391,6 +557,10 @@ fn helper_types_the_layout_only_into_the_focused_game() {
         ("axis leftx 32767", "axis leftx 0", vec!["r"]),
         ("axis lefty 32767", "axis lefty 0", vec!["e"]),
         ("button start 1", "button start 0", vec!["y"]),
+        ("axis rightx -32768", "axis rightx 0", vec!["b"]),
+        ("axis rightx 32767", "axis rightx 0", vec!["m"]),
+        ("axis righty -32768", "axis righty 0", vec!["j"]),
+        ("axis righty 32767", "axis righty 0", vec!["h"]),
     ] {
         h.step(press, &keys.iter().map(|k| down(k)).collect::<Vec<_>>());
         h.step(release, &keys.iter().map(|k| up(k)).collect::<Vec<_>>());
@@ -446,20 +616,45 @@ fn helper_types_the_layout_only_into_the_focused_game() {
     h.os_key('o', false, "released on disconnect");
     h.os_key('i', false, "released on disconnect");
 
-    h.helper.send("quit");
-    let start = Instant::now();
-    let status = loop {
-        if let Some(status) = h.helper.child.try_wait().unwrap() {
-            break status;
-        }
-        assert!(start.elapsed() < WAIT, "helper did not exit{}", h.report());
-        thread::sleep(Duration::from_millis(20));
-    };
-    assert!(status.success(), "helper exit {status}{}", h.report());
+    // Only the in-process virtual pad gives the helper a stdin to quit through.
+    #[cfg(target_os = "macos")]
+    {
+        h.helper.send("quit");
+        let start = Instant::now();
+        let status = loop {
+            if let Some(status) = h.helper.child.try_wait().unwrap() {
+                break status;
+            }
+            assert!(start.elapsed() < WAIT, "helper did not exit{}", h.report());
+            thread::sleep(Duration::from_millis(20));
+        };
+        assert!(status.success(), "helper exit {status}{}", h.report());
+    }
+    #[cfg(windows)]
+    thread::sleep(QUIET);
+
+    // The whole run, not just each step: nothing lost, extra, repeated or reordered.
+    let received = h.game.keys();
+    if let Some(i) =
+        (0..received.len().max(h.expected.len())).find(|&i| received.get(i) != h.expected.get(i))
+    {
+        panic!(
+            "game window key {i}: received {:?}, expected {:?} ({} received, {} expected){}",
+            received.get(i),
+            h.expected.get(i),
+            received.len(),
+            h.expected.len(),
+            h.report()
+        );
+    }
     assert!(
-        !h.other.entries().iter().any(|(kind, _)| kind == "key_down"),
-        "other window received a key press{}",
+        h.other.keys().is_empty(),
+        "other window received keys{}",
         h.report()
+    );
+    println!(
+        "game window received all {} expected key events in order",
+        received.len()
     );
     println!("{}", h.report());
 }

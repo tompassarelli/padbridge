@@ -37,6 +37,8 @@ objc2-core-foundation = { version = "0.3", default-features = false, features = 
 # The end-to-end test reads OS key state.
 [target.'cfg(windows)'.dev-dependencies]
 windows = { version = "0.61", features = ["Win32_UI_Input_KeyboardAndMouse"] }
+# Drives a ViGEmBus virtual DualShock 4 in the end-to-end test.
+vigem-client = { version = "=0.1.4", features = ["unstable_ds4"] }
 
 [[bin]]
 name = "wc3-journal"
