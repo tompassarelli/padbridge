@@ -2695,12 +2695,21 @@ mod linux {
         }
         assert_eq!(sender.queued.records.len(), 4);
         assert_eq!(sender.queued.records[1].split('|').count(), RECORD_PACKETS);
-        assert_eq!(sender.queued.records[3], packet(5 + 2 * 2 * (RECORD_PACKETS as u32 - 1) + 2));
+        let expected: Vec<_> = (3..5 + 2 * 2 * RECORD_PACKETS as u32)
+            .step_by(2)
+            .map(packet)
+            .collect();
+        let retained: Vec<_> = sender.queued.records.iter().skip(1)
+            .flat_map(|record| record.split('|').map(str::to_owned))
+            .collect();
+        assert_eq!(retained, expected);
+        assert!(sender.queued.records.iter().all(|record|
+            ENVELOPE_BYTES + record.len() <= TYPED_AHEAD_BYTES));
         // A control acknowledgment is never joined, and nothing joins it.
         sender.enqueue("ACK1|1|PREPARE|200".into()).unwrap();
         sender.enqueue(packet(200)).unwrap();
         assert_eq!(sender.queued.records.len(), 6);
-        // Record 1 was typed; records 2 and 3 are 16 packets each, more than TYPED_AHEAD_BYTES together.
+        // Record 1 was typed; the next joined records exceed TYPED_AHEAD_BYTES together.
         let (second, _) = sender.text_window.next(&sender.queued, 3, now).unwrap().unwrap();
         sender.text_window.sent(second, now);
         assert!(ENVELOPE_BYTES + sender.queued.records[1].len() <= TYPED_AHEAD_BYTES);
