@@ -178,7 +178,7 @@ mod linux {
     // how much it takes at once: in 0.0.48's native bot session, 16 records
     // typed after a 2 s stop held the client about 180 ms, and input stayed
     // late for 5 s. Type at most this much past what a receipt says arrived.
-    const TYPED_AHEAD_BYTES: usize = 256;
+    const TYPED_AHEAD_BYTES: usize = 160;
 
     #[derive(Default)]
     struct TextWindow {
