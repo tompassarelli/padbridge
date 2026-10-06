@@ -846,7 +846,9 @@ mod linux {
     }
 
     fn usage() -> &'static str {
-        "wc3-journal --follow-matches --build BUILD --slot N --device /dev/input/eventN --out DIR --editbox-display :N [--trace]\n\
+        "wc3-journal --service [--display :0] [--pads /dev/input/by-id] [--status FILE] [--headless DOCUMENTS]\n\
+         Always on: finds Warcraft III on the display, the controller and the map's session, and keeps a helper serving them.\n\
+         wc3-journal --follow-matches --build BUILD --slot N [--epoch N] --device /dev/input/eventN --out DIR --editbox-display :N [--trace]\n\
          Start in character selection; stick left/right chooses, A selects, X backs, Start confirms. Follows matches and rematches.\n\
          Diagnostic only: wc3-journal --device /dev/input/eventN --out DIR --ready-file PATH --epoch-monotonic-ns NS [--mailbox-display :N | --editbox-display :N] [--first-frame N] [--stop-frame N] [--trace]\n\
          Keyboard output also requires --x11-window DECIMAL_ID --pid PID and exactly one of --niri-window ID / --private-wlr-app-id ID.\n\
@@ -1018,7 +1020,9 @@ mod linux {
         }
         let ready_file = values.get("--ready-file").map(PathBuf::from);
         let (build, epoch, slot, delay) = if follow_matches {
-            (take("--build")?.clone(), 0, parse("--slot")?, 0)
+            // --epoch names the map's current epoch when the helper starts mid-session.
+            let epoch = if values.contains_key("--epoch") { parse("--epoch")? } else { 0 };
+            (take("--build")?.clone(), epoch, parse("--slot")?, 0)
         } else if let Some(path) = ready_file.as_ref() {
             read_ready(path)?
         } else {
@@ -3768,7 +3772,22 @@ mod linux {
         Ok((axes, state, key_state.contains(Key::BTN_START)))
     }
 
+    /// A helper the service started ends with it, so a restarted service never meets a second typist.
+    fn end_with_service() -> Result<(), String> {
+        let Some(parent) = env::var_os("WC3_SERVICE_PID") else { return Ok(()) };
+        // SAFETY: prctl with PR_SET_PDEATHSIG takes a signal number and changes only this process.
+        if unsafe { libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM) } != 0 {
+            return Err(format!("end with the service: {}", io::Error::last_os_error()));
+        }
+        // SAFETY: getppid has no preconditions.
+        if parent.to_str().and_then(|pid| pid.parse::<i32>().ok()) != Some(unsafe { libc::getppid() }) {
+            return Err("the service that started this helper has ended".into());
+        }
+        Ok(())
+    }
+
     fn run() -> Result<(), String> {
+        end_with_service()?;
         let mut o = options()?;
         let mut ready_after_ns = clock_ns(libc::CLOCK_REALTIME).map_err(|e| e.to_string())?;
         if (!o.follow_matches && o.epoch == 0) || o.slot > 3 || o.delay > 64 {
@@ -4423,7 +4442,35 @@ mod linux {
         }
     }
 
+    fn service() -> Result<(), String> {
+        let mut config = wc3_controller::service::Config::default();
+        let mut args = env::args().skip(2);
+        while let Some(arg) = args.next() {
+            let mut value = || args.next().ok_or_else(|| format!("missing value for {arg}"));
+            match arg.as_str() {
+                "--display" => config.display = value()?,
+                "--pads" => config.pads = value()?.into(),
+                "--status" => config.status_file = Some(value()?.into()),
+                "--helper" => config.helper = value()?.into(),
+                "--headless" => config.headless = Some(value()?.into()),
+                "--poll-ms" => config.poll = Duration::from_millis(value()?.parse().map_err(|_| "invalid --poll-ms")?),
+                _ => return Err(format!("unexpected argument {arg:?}\n{}", usage())),
+            }
+        }
+        let stop = Arc::new(AtomicBool::new(false));
+        let signal = Arc::clone(&stop);
+        ctrlc::set_handler(move || signal.store(true, Ordering::Relaxed)).map_err(|error| format!("install interrupt handler: {error}"))?;
+        wc3_controller::service::run(&config, &mut wc3_controller::service::smashcraft::Smashcraft::default(), &stop, |_| {})
+    }
+
     pub fn main() {
+        if env::args().nth(1).as_deref() == Some("--service") {
+            if let Err(error) = service() {
+                eprintln!("wc3-journal --service: {error}");
+                std::process::exit(1);
+            }
+            return;
+        }
         if let Err(error) = run() {
             eprintln!("wc3-journal: {error}");
             std::process::exit(1);

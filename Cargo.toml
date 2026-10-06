@@ -16,7 +16,7 @@ e2e = []
 [dependencies]
 sdl3 = { version = "=0.20.0", features = ["build-from-source-static", "build-from-source-unix-console"] }
 enigo = { git = "https://github.com/tompassarelli/enigo", rev = "0b7bae348b0ba7108b81bc4c7267e5bb2d6a509b" }
-ctrlc = "3.5"
+ctrlc = { version = "3.5", features = ["termination"] }
 wc3-controller-model = { path = "model" }
 
 [target.'cfg(target_os = "linux")'.dependencies]

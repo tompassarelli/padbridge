@@ -2,6 +2,8 @@
 
 pub mod output;
 pub mod stick;
+#[cfg(target_os = "linux")]
+pub mod service;
 
 pub use wc3_controller_model as model;
 

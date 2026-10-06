@@ -245,6 +245,31 @@ no Blizzard Controller Support, W3Champions, Dolphin or Slippi source was copied
 or translated. SDL is zlib-licensed; sdl3 and enigo are MIT-licensed. Any future
 distribution must retain dependency notices and satisfy transitive licenses.
 
+## Always-on controller service (Linux)
+
+`wc3-journal --service` takes no arguments. It finds Warcraft III on display
+`:0` (a `Warcraft III.exe` process whose `DISPLAY` is `:0`; its Wine prefix
+gives Documents/Warcraft III), the game's X11 window (`_NET_WM_PID`) and its
+niri window (unique title and class), and the controller by its stable
+`/dev/input/by-id/*-event-joystick` link, an Xbox pad first. The Smashcraft
+profile reads the newest menu publication in CustomMapData for the build,
+slot and current epoch, and the service runs one `--follow-matches` helper for
+them (`--epoch` passes the map's current epoch, so a helper started mid-session
+drives that menu). It replaces the helper when Warcraft III restarts or its
+window changes, when a newer menu publication starts a new map session (a
+lower epoch, or another build or slot), when the helper has been without its
+pad for 3 s while a pad is plugged in (a pad that came back as another
+device), and 2 s after a helper exits for any reason. A lock in
+`$XDG_RUNTIME_DIR` keeps one service per display; its helpers end with it.
+`~/.local/state/smashcraft/controller-service.txt` holds its current state
+(`state=serving`, `game_pid`, `session`, `helper_pid`, ...). Discovery and
+the helper's lifecycle are map-agnostic in smashcraft:companion/src/service.rs;
+map-specific knowledge is a `Profile` (smashcraft:companion/src/service/smashcraft.rs).
+`--display`, `--pads`, `--status` and `--headless DOCUMENTS` (a stand-in game
+whose `game` file names it; the helper types into `typed.txt`) serve tests.
+smashcraft:companion/tests/service.rs drives a fake session through a new map
+session and a game restart with a virtual pad.
+
 ## Experimental Linux original-frame journal
 
 `wc3-journal` is a separate Linux evdev acquisition executable. It uses kernel
