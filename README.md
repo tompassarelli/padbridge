@@ -473,3 +473,18 @@ smashcraft:evidence/native-focus-20261005/README.md.
 The editbox path holds no global transport keys; the legacy mailbox retains its existing signal state
 until eligible and gates its cleanup too, so unfocused teardown does not emit
 key releases to a different application.
+
+## Status model and the Any map profile
+
+smashcraft:companion/model (crate `wc3-controller-model`, re-exported as
+`wc3_controller::model`) holds what the controller service knows (pad, game,
+map session, active profile, whether presses reach the game), the
+newline-delimited JSON messages on its local interface (`{"status":...}`,
+`{"input":...}` from the service; `{"profile":"auto"|"smashcraft"|"any_map"|"off"}`
+and `{"bindings":[...]}` to it), the plain-language rows and status light a
+window shows, both profiles' binding tables, and the Any map profile's mapper
+(keys, clicks and pointer from configurable bindings). It has no I/O and builds
+without SDL, so windows such as smashcraft:client depend on it alone.
+smashcraft:companion is a self-contained Cargo workspace (`cargo test --workspace`)
+so it can move to its own repository; consumers then switch their path
+dependency on `wc3-controller-model` to a git one.
