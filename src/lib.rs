@@ -3,6 +3,8 @@
 pub mod output;
 pub mod stick;
 
+pub use wc3_controller_model as model;
+
 use sdl3::{
     event::Event,
     gamepad::{Axis, Button},
