@@ -80,16 +80,32 @@ pub struct Driver {
     mapper: Mapper,
     focused: bool,
     menu: Option<MenuCurve>,
+    /// Smashcraft on keys: this mapper replaces the bindings' one.
+    keys: Option<crate::Mapper>,
 }
 
 impl Driver {
     pub fn new(bindings: Vec<Binding>) -> Self {
-        Self { mapper: Mapper::new(bindings), focused: false, menu: None }
+        Self { mapper: Mapper::new(bindings), focused: false, menu: None, keys: None }
     }
 
     /// The menu pointer: the left stick moves the pointer by `curve`, A and B click.
     pub fn menu(curve: MenuCurve) -> Self {
-        Self { mapper: Mapper::new(menu_bindings()), focused: false, menu: Some(curve) }
+        Self { mapper: Mapper::new(menu_bindings()), focused: false, menu: Some(curve), keys: None }
+    }
+
+    /// Smashcraft on keys. Focus loss releases every key, and nothing presses
+    /// again until the pad returns to neutral while focused.
+    pub fn keys() -> Self {
+        Self { mapper: Mapper::new(Vec::new()), focused: false, menu: None, keys: Some(crate::Mapper::default()) }
+    }
+
+    fn deliver_keys(transitions: Vec<crate::Transition>, out: &mut dyn Output) -> Result<(), String> {
+        for transition in transitions {
+            let key = match transition.action.key() { ' ' => "space".to_owned(), key => key.to_string() };
+            out.key(&key, transition.pressed)?;
+        }
+        Ok(())
     }
 
     fn deliver(events: Vec<Event>, out: &mut dyn Output) -> Result<(), String> {
@@ -110,6 +126,10 @@ impl Driver {
     /// One pad state. `seconds` since the last pointer step moves the pointer;
     /// 0 changes only presses.
     pub fn step(&mut self, input: &InputView, focused: bool, seconds: f32, out: &mut dyn Output) -> Result<(), String> {
+        if let Some(keys) = &mut self.keys {
+            self.focused = focused;
+            return Self::deliver_keys(keys.update(Some(&sample_of(input)), focused), out);
+        }
         if !focused {
             if self.focused {
                 Self::deliver(self.mapper.release_all(), out)?;
@@ -139,12 +159,18 @@ impl Driver {
 
     /// New bindings: what the old ones held is released first.
     pub fn bind(&mut self, bindings: Vec<Binding>, out: &mut dyn Output) -> Result<(), String> {
+        if self.keys.is_some() {
+            return Ok(());
+        }
         Self::deliver(self.mapper.release_all(), out)?;
         self.mapper = Mapper::new(bindings);
         Ok(())
     }
 
     pub fn release(&mut self, out: &mut dyn Output) -> Result<(), String> {
+        if let Some(keys) = &mut self.keys {
+            return Self::deliver_keys(keys.update(None, false), out);
+        }
         Self::deliver(self.mapper.release_all(), out)
     }
 }
@@ -241,6 +267,49 @@ pub enum Mode {
     AnyMap(Vec<Binding>),
     /// Smashcraft's menus: pointer and clicks only.
     Menu,
+    /// Smashcraft played on keys: the controller-as-keys mapper of
+    /// `wc3-controller --emit` ([`crate::Mapper`]), whose keys are the map's
+    /// standard key layout (README, "Xbox mapping").
+    Keys,
+}
+
+/// Which output runs, for the service to compare and log.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kind {
+    AnyMap,
+    Menu,
+    Keys,
+}
+
+impl Kind {
+    pub fn name(self) -> &'static str {
+        match self {
+            Kind::AnyMap => "Any map",
+            Kind::Menu => "menu pointer",
+            Kind::Keys => "Smashcraft keys",
+        }
+    }
+}
+
+/// The service's pad state as the controller-as-keys mapper reads it (SDL's axes and trigger range).
+pub fn sample_of(input: &InputView) -> crate::Sample {
+    let button = |button: model::Button| input.buttons & (1 << (button as u32)) != 0;
+    let trigger = |value: u16| value.min(i16::MAX as u16) as i16;
+    crate::Sample {
+        left_x: input.left[0],
+        left_y: input.left[1],
+        right_x: input.right[0],
+        right_y: input.right[1],
+        left_trigger: trigger(input.lt),
+        right_trigger: trigger(input.rt),
+        a: button(model::Button::A),
+        b: button(model::Button::B),
+        x: button(model::Button::X),
+        y: button(model::Button::Y),
+        lb: button(model::Button::Lb),
+        rb: button(model::Button::Rb),
+        start: button(model::Button::Start),
+    }
 }
 
 /// What the running output is fed.
@@ -278,6 +347,7 @@ pub fn spawn(window: Window, mode: Mode, feed: mpsc::Receiver<Feed>, stop: Arc<A
                 let height = niri_window_height(&window.niri_socket, window.niri_window).unwrap_or(1440.0);
                 Driver::menu(MenuCurve::for_window_height(height))
             }
+            Mode::Keys => Driver::keys(),
         };
         let mut input = InputView::default();
         let (mut checked, mut is_focused) = (Instant::now() - FOCUS_EVERY, false);
@@ -355,6 +425,46 @@ mod tests {
 
     fn take(out: &mut Recorded) -> Vec<String> {
         std::mem::take(&mut out.0)
+    }
+
+    #[test]
+    fn smashcraft_on_keys_presses_the_maps_standard_layout() {
+        let (mut driver, mut out) = (Driver::keys(), Recorded::default());
+        let mut pad = InputView::default();
+        // Arms on a neutral pad.
+        driver.step(&pad, true, 0.0, &mut out).unwrap();
+        for (button, key) in [(Button::A, "n"), (Button::X, "u"), (Button::B, "i"), (Button::Rb, "o"), (Button::Lb, "p"), (Button::Start, "y")] {
+            pad.press(button, true);
+            driver.step(&pad, true, 0.0, &mut out).unwrap();
+            pad.press(button, false);
+            driver.step(&pad, true, 0.0, &mut out).unwrap();
+            assert_eq!(take(&mut out), [format!("down {key}"), format!("up {key}")], "{button:?}");
+        }
+        pad.lt = 20000;
+        pad.left = [-32767, 0];
+        pad.right = [0, -32767];
+        driver.step(&pad, true, 0.0, &mut out).unwrap();
+        let mut pressed = take(&mut out);
+        pressed.sort();
+        assert_eq!(pressed, ["down j", "down q", "down w"]);
+        // Focus loss releases them; back in focus nothing presses until the pad is neutral.
+        driver.step(&pad, false, 0.0, &mut out).unwrap();
+        assert_eq!(take(&mut out).len(), 3);
+        driver.step(&pad, true, 0.0, &mut out).unwrap();
+        assert!(take(&mut out).is_empty());
+    }
+
+    #[test]
+    fn the_keys_mapper_and_the_shown_smashcraft_layout_agree() {
+        let shown: std::collections::BTreeSet<String> = model::smashcraft_bindings().into_iter()
+            .filter_map(|binding| match binding.press { Press::Key(key) => Some(key), _ => None })
+            .collect();
+        let pressed: std::collections::BTreeSet<String> = [
+            crate::Action::Attack, crate::Action::Special, crate::Action::Jump, crate::Action::Grab, crate::Action::Shield, crate::Action::Walk,
+            crate::Action::Start, crate::Action::Left, crate::Action::Right, crate::Action::Down, crate::Action::Up,
+            crate::Action::CLeft, crate::Action::CRight, crate::Action::CUp, crate::Action::CDown,
+        ].into_iter().map(|action| match action.key() { ' ' => "space".to_owned(), key => key.to_string() }).collect();
+        assert_eq!(pressed, shown);
     }
 
     #[test]

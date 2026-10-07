@@ -95,6 +95,10 @@ pub trait Profile {
     fn pointer_menu(&self) -> bool {
         false
     }
+    /// Whether the session plays on keys: no helper; the service presses the pad's keys itself.
+    fn keys(&self) -> bool {
+        false
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -113,6 +117,8 @@ pub struct Status {
     pub pad: Option<Pad>,
     pub session: Option<Session>,
     pub helper: Option<HelperStatus>,
+    /// The pad's keys reach a session that plays on keys.
+    pub keys: bool,
     /// Why the last helper stopped, or what is missing.
     pub problem: Option<String>,
 }
@@ -123,6 +129,7 @@ impl Status {
         let mut text = format!("service_pid={}\nprofile={}\n", std::process::id(), self.profile);
         let state = match (&self.helper, &self.game, &self.pad, &self.session) {
             (Some(helper), ..) if helper.ready => "serving",
+            (None, Some(_), Some(_), Some(_)) if self.keys => "serving",
             (Some(_), ..) => "starting",
             (None, None, ..) => "no-game",
             (None, _, None, _) => "no-controller",
@@ -479,7 +486,7 @@ pub fn run(config: &Config, profile: &mut dyn Profile, stop: &AtomicBool, mut re
     let mut bindings = any_map::default_bindings();
     // The running Any map output's feed; the pad watcher sends every state to it.
     let feed: Arc<Mutex<Option<mpsc::Sender<any_map::Feed>>>> = Arc::new(Mutex::new(None));
-    let mut any_map_running: Option<(any_map::Window, u32, bool, Arc<AtomicBool>, Arc<AtomicBool>)> = None;
+    let mut any_map_running: Option<(any_map::Window, u32, any_map::Kind, Arc<AtomicBool>, Arc<AtomicBool>)> = None;
     let mut watching: Option<(PathBuf, Arc<AtomicBool>)> = None;
     let mut supervisor = Supervisor::default();
     let mut running: Option<Running> = None;
@@ -578,7 +585,7 @@ pub fn run(config: &Config, profile: &mut dyn Profile, stop: &AtomicBool, mut re
                     }
                     model::ClientMessage::Bindings(new) => {
                         eprintln!("service: {} Any map bindings received", new.len());
-                        if any_map_running.as_ref().is_some_and(|(_, _, menu, ..)| !menu) {
+                        if any_map_running.as_ref().is_some_and(|(_, _, kind, ..)| *kind == any_map::Kind::AnyMap) {
                             if let Some(send) = feed.lock().unwrap().as_ref() {
                                 let _ = send.send(any_map::Feed::Bindings(new.clone()));
                             }
@@ -616,9 +623,11 @@ pub fn run(config: &Config, profile: &mut dyn Profile, stop: &AtomicBool, mut re
         let resolved = choice.resolve(session.is_some());
         // Another profile than this one presses nothing through its helper.
         let session = if resolved == model::Profile::Smashcraft { session } else { None };
-        if resolved != model::Profile::Smashcraft {
+        // A session on keys needs no helper: the pad's keys output serves it.
+        let keys = resolved == model::Profile::Smashcraft && session.is_some() && profile.keys();
+        if resolved != model::Profile::Smashcraft || keys {
             if let Some(current) = running.take() {
-                eprintln!("service: stopping the helper: profile {resolved:?}");
+                eprintln!("service: stopping the helper: {}", if keys { "the session plays on keys".to_owned() } else { format!("profile {resolved:?}") });
                 stop_child(current);
                 status.helper = None;
                 supervisor = Supervisor::default();
@@ -628,29 +637,36 @@ pub fn run(config: &Config, profile: &mut dyn Profile, stop: &AtomicBool, mut re
         // profile, or the pointer in the map's menus (never during play).
         let menu = resolved == model::Profile::Smashcraft && profile.pointer_menu()
             && status.helper.as_ref().is_none_or(|helper| !helper.in_match);
-        let want = match (&game, &pad) {
-            (Some(Game { pid, target: Target::Window { display, niri_window, niri_socket, .. }, .. }), Some(_)) if resolved == model::Profile::AnyMap || menu => {
-                Some((any_map::Window { display: display.clone(), niri_socket: niri_socket.clone(), niri_window: *niri_window }, *pid, menu))
+        let kind = if keys { Some(any_map::Kind::Keys) } else if menu { Some(any_map::Kind::Menu) } else if resolved == model::Profile::AnyMap { Some(any_map::Kind::AnyMap) } else { None };
+        let want = match (&game, &pad, kind) {
+            (Some(Game { pid, target: Target::Window { display, niri_window, niri_socket, .. }, .. }), Some(_), Some(kind)) => {
+                Some((any_map::Window { display: display.clone(), niri_socket: niri_socket.clone(), niri_window: *niri_window }, *pid, kind))
             }
             _ => None,
         };
-        if any_map_running.as_ref().map(|(window, pid, menu, ..)| (window.clone(), *pid, *menu)) != want {
-            if let Some((_, _, menu, stop, _)) = any_map_running.take() {
+        if any_map_running.as_ref().map(|(window, pid, kind, ..)| (window.clone(), *pid, *kind)) != want {
+            if let Some((_, _, kind, stop, _)) = any_map_running.take() {
                 stop.store(true, Ordering::Relaxed);
                 *feed.lock().unwrap() = None;
-                eprintln!("service: {} off", if menu { "menu pointer" } else { "Any map" });
+                eprintln!("service: {} off", kind.name());
             }
-            if let Some((window, pid, menu)) = want {
+            if let Some((window, pid, kind)) = want {
                 let (send, receive) = mpsc::channel();
                 let (stop, focused) = (Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false)));
-                let mode = if menu { any_map::Mode::Menu } else { any_map::Mode::AnyMap(bindings.clone()) };
+                let mode = match kind {
+                    any_map::Kind::Menu => any_map::Mode::Menu,
+                    any_map::Kind::Keys => any_map::Mode::Keys,
+                    any_map::Kind::AnyMap => any_map::Mode::AnyMap(bindings.clone()),
+                };
                 any_map::spawn(window.clone(), mode, receive, Arc::clone(&stop), Arc::clone(&focused));
                 *feed.lock().unwrap() = Some(send);
-                eprintln!("service: {} on for Warcraft III pid={pid}", if menu { "menu pointer" } else { "Any map" });
-                any_map_running = Some((window, pid, menu, stop, focused));
+                eprintln!("service: {} on for Warcraft III pid={pid}", kind.name());
+                any_map_running = Some((window, pid, kind, stop, focused));
             }
         }
-        match supervisor.step(game.as_ref(), pad.as_ref(), session.as_ref(), now) {
+        status.keys = any_map_running.as_ref().is_some_and(|(_, _, kind, ..)| *kind == any_map::Kind::Keys);
+        let helper_session = if keys { None } else { session.as_ref() };
+        match supervisor.step(game.as_ref(), pad.as_ref(), helper_session, now) {
             Decision::Keep => {}
             Decision::Stop(reason) => {
                 eprintln!("service: replacing the helper: {reason}");
@@ -702,12 +718,12 @@ pub fn run(config: &Config, profile: &mut dyn Profile, stop: &AtomicBool, mut re
         let idle = status.game.is_none();
         publish(&status, &mut written);
         if let Some(interface) = &interface {
-            let any_map = any_map_running.as_ref().filter(|(_, _, menu, ..)| !menu).map(|(.., focused)| focused.load(Ordering::Relaxed));
+            let any_map = any_map_running.as_ref().filter(|(_, _, kind, ..)| *kind == any_map::Kind::AnyMap).map(|(.., focused)| focused.load(Ordering::Relaxed));
             interface.status(&snapshot(&status, choice, resolved, any_map));
         }
         // Without a game, looking once a second is enough and costs little.
         // The menu pointer must stop promptly when play begins.
-        let pointing = any_map_running.as_ref().is_some_and(|(_, _, menu, ..)| *menu);
+        let pointing = any_map_running.as_ref().is_some_and(|(_, _, kind, ..)| *kind == any_map::Kind::Menu);
         thread::sleep(if idle { config.poll.max(IDLE_POLL) } else if pointing { config.poll.min(MENU_POLL) } else { config.poll });
     }
     if let Some(current) = running.take() {

@@ -7,6 +7,12 @@
 //! publication with a lower epoch, or another build or slot, is a new map
 //! session (the map was opened again), which a running helper would ignore,
 //! so it gets a new session key and a fresh helper.
+//!
+//! A build that reads Warcraft's own key events (the playable build, #166)
+//! publishes no menu. Its ready file `CustomMapData/wc3-melee-ready.txt`,
+//! written at fighter selection, names the build and `INPUT callback`: that
+//! session plays on keys, so the service runs no helper and presses the
+//! controller's keys itself ([`super::any_map::Mode::Keys`]).
 
 use super::{Game, HelperEvent, Pad, Profile, Session, Target};
 use crate::model;
@@ -105,6 +111,31 @@ impl Tracker {
     }
 }
 
+/// A keyboard build's session: its build, from its ready file.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct KeysSession {
+    pub build: String,
+    pub modified: SystemTime,
+}
+
+/// The ready file's build when it names a build on key events; None for a journal build or a partial file.
+pub fn keys_build(contents: &str) -> Option<String> {
+    if contents.lines().rev().find(|line| !line.trim().is_empty()).map(str::trim) != Some("endfunction") {
+        return None;
+    }
+    let value = |label: &str| contents.split(&format!("\"{label} ")).nth(1)?.split('"').next().map(str::to_owned);
+    let input = value("INPUT")?;
+    (input.split_whitespace().next() == Some("callback")).then_some(())?;
+    value("BUILD").filter(|build| !build.is_empty())
+}
+
+/// The ready file in a CustomMapData folder, when it names a keyboard build.
+pub fn keys_session(dir: &Path) -> Option<KeysSession> {
+    let path = dir.join("wc3-melee-ready.txt");
+    let modified = fs::metadata(&path).ok()?.modified().ok()?;
+    Some(KeysSession { build: keys_build(&fs::read_to_string(path).ok()?)?, modified })
+}
+
 /// When the process with these start ticks (/proc/PID/stat field 22) started.
 pub fn started_at(birth: u64) -> Option<SystemTime> {
     let stat = fs::read_to_string("/proc/stat").ok()?;
@@ -117,6 +148,10 @@ pub fn started_at(birth: u64) -> Option<SystemTime> {
 pub struct Smashcraft {
     tracker: Tracker,
     game: Option<(u32, u64)>,
+    /// The keyboard session this game runs, when it is newer than any menu publication.
+    keys: Option<KeysSession>,
+    /// Keyboard sessions seen, for their keys.
+    keys_generation: u32,
 }
 
 impl Profile for Smashcraft {
@@ -127,14 +162,35 @@ impl Profile for Smashcraft {
     fn session(&mut self, game: &Game) -> Option<Session> {
         if self.game != Some((game.pid, game.birth)) {
             self.tracker.forget();
+            self.keys = None;
             self.game = Some((game.pid, game.birth));
         }
-        // Only what this game published: an older menu file is an earlier game's.
+        // Only what this game published: an older menu or ready file is an earlier game's.
         let started = started_at(game.birth);
-        if let Some(menu) = newest_menu(&game.documents.join("CustomMapData")).filter(|menu| started.is_none_or(|at| menu.modified >= at)) {
+        let data = game.documents.join("CustomMapData");
+        if let Some(menu) = newest_menu(&data).filter(|menu| started.is_none_or(|at| menu.modified >= at)) {
             self.tracker.observe(&game.documents, menu);
         }
-        self.tracker.session()
+        let keys = keys_session(&data)
+            .filter(|keys| started.is_none_or(|at| keys.modified >= at))
+            .filter(|keys| self.tracker.menu().is_none_or(|menu| keys.modified > menu.modified));
+        if keys.as_ref().map(|keys| keys.modified) != self.keys.as_ref().map(|keys| keys.modified) && keys.is_some() {
+            self.keys_generation += 1;
+        }
+        self.keys = keys;
+        match &self.keys {
+            Some(keys) => Some(Session {
+                key: format!("{}/keys/{}", keys.build, self.keys_generation),
+                summary: format!("Smashcraft {} on keys", keys.build),
+                // The ready file names no menu phase or player.
+                shown: None,
+            }),
+            None => self.tracker.session(),
+        }
+    }
+
+    fn keys(&self) -> bool {
+        self.keys.is_some()
     }
 
     fn args(&self, game: &Game, pad: &Pad, _session: &Session) -> Vec<String> {
@@ -159,7 +215,7 @@ impl Profile for Smashcraft {
     /// Fighter, stage and results menus, while the map keeps publishing them
     /// (it refreshes an open menu every 250 ms and publishes BLOCKED for play).
     fn pointer_menu(&self) -> bool {
-        self.tracker.menu().is_some_and(|menu| {
+        self.keys.is_none() && self.tracker.menu().is_some_and(|menu| {
             matches!(menu.phase.as_str(), "CHARACTER" | "STAGE" | "RESULT")
                 && SystemTime::now().duration_since(menu.modified).is_ok_and(|age| age <= std::time::Duration::from_secs(1))
         })
@@ -269,6 +325,43 @@ mod tests {
         // A menu the map stopped refreshing (it closed, or the game froze) is no menu.
         profile.tracker.observe(documents, Menu { modified: now - Duration::from_secs(2), ..menu("b", 0, 1, 0) });
         assert!(!profile.pointer_menu());
+    }
+
+    const READY: &str = "function PreloadFiles takes nothing returns nothing\n\tcall Preload( \"BUILD playable-0047\" )\n\tcall Preload( \"INPUT callback PRESENTATION pool-confirmed\" )\n\tcall Preload( \"SCENARIO normal\" )\nendfunction\n";
+
+    #[test]
+    fn a_ready_file_names_a_keyboard_build() {
+        assert_eq!(keys_build(READY), Some("playable-0047".into()));
+        // A journal build's ready file is no keyboard session; nor is a partial file.
+        assert_eq!(keys_build(&READY.replace("INPUT callback", "INPUT shadow-d0-r24")), None);
+        assert_eq!(keys_build(READY.trim_end_matches("endfunction\n")), None);
+    }
+
+    #[test]
+    fn a_keyboard_build_is_a_keys_session_until_a_journal_map_publishes_a_menu() {
+        let documents = std::env::temp_dir().join(format!("smashcraft-keys-{}", std::process::id()));
+        let data = documents.join("CustomMapData");
+        fs::create_dir_all(&data).unwrap();
+        let game = Game { pid: 1, birth: 1, documents: documents.clone(), target: Target::Headless { text_out: "/dev/null".into() } };
+        let mut profile = Smashcraft::default();
+        assert_eq!(profile.session(&game), None);
+        fs::write(data.join("wc3-melee-ready.txt"), READY).unwrap();
+        let first = profile.session(&game).unwrap();
+        assert!(profile.keys());
+        assert!(first.key.starts_with("playable-0047/keys/"));
+        assert!(!profile.pointer_menu());
+        assert_eq!(profile.session(&game), Some(first.clone()));
+        // The map opened again: a new ready file, a new session.
+        std::thread::sleep(Duration::from_millis(20));
+        fs::write(data.join("wc3-melee-ready.txt"), READY).unwrap();
+        assert_ne!(profile.session(&game).unwrap().key, first.key);
+        // A journal map opened after it publishes a menu: that session wins.
+        std::thread::sleep(Duration::from_millis(20));
+        fs::write(data.join("smashcraft-journal-menu-typescript-integrity-s0.txt"),
+            "call Preload( \"SMASHCRAFT JOURNAL MENU v=1 build=typescript-integrity epoch=0 slot=0 phase=CHARACTER\" )\nendfunction\n").unwrap();
+        assert!(profile.session(&game).unwrap().key.starts_with("typescript-integrity/s0/"));
+        assert!(!profile.keys());
+        fs::remove_dir_all(documents).unwrap();
     }
 
     #[test]
