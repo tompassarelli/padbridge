@@ -74,6 +74,58 @@ fn serving(status: &Path) -> Option<String> {
 }
 
 #[test]
+fn layout_tap_jump_and_trigger_choices_take_effect_live_and_survive_service_restart() {
+    use std::{io::{BufRead, BufReader, Write}, net::{TcpListener, TcpStream}};
+    use wc3_controller::model::{ClientMessage, ControllerSettings, PadPreset, ServiceMessage, TriggerShield, TriggerShields};
+    let root = std::env::temp_dir().join(format!("wc3-controller-settings-{}", std::process::id()));
+    let documents = root.join("game");
+    let pads = root.join("pads");
+    fs::create_dir_all(&documents).unwrap();
+    fs::create_dir_all(&pads).unwrap();
+    let path = root.join("controller.json");
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    drop(listener);
+    let start = || Service(Command::new(env!("CARGO_BIN_EXE_wc3-journal"))
+        .args(["--service", "--pads", pads.to_str().unwrap(), "--headless", documents.to_str().unwrap(),
+            "--settings", path.to_str().unwrap(), "--status", root.join("status.txt").to_str().unwrap(),
+            "--interface", &address.to_string(), "--poll-ms", "10"])
+        .stdin(Stdio::null()).spawn().unwrap());
+    let connect = || {
+        let stream = until("isolated service interface", || TcpStream::connect(address).ok());
+        stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        stream
+    };
+    let read = |stream: &TcpStream| {
+        let mut line = String::new();
+        BufReader::new(stream.try_clone().unwrap()).read_line(&mut line).unwrap();
+        let ServiceMessage::Status(snapshot) = ServiceMessage::parse(&line).unwrap() else { panic!("expected settings snapshot") };
+        snapshot.settings
+    };
+    let service = start();
+    let mut stream = connect();
+    assert_eq!(read(&stream), ControllerSettings::default());
+    let selected = ControllerSettings {
+        pad_preset: PadPreset::ZJump, tap_jump: true,
+        triggers: TriggerShields { left: TriggerShield::Light, right: TriggerShield::Full },
+    };
+    for message in [ClientMessage::PadPreset(selected.pad_preset), ClientMessage::TapJump(selected.tap_jump), ClientMessage::TriggerShields(selected.triggers)] {
+        stream.write_all(message.line().as_bytes()).unwrap();
+    }
+    until("all three settings saved in one file", || fs::read_to_string(&path).ok()
+        .and_then(|text| serde_json::from_str::<ControllerSettings>(&text).ok()).filter(|saved| *saved == selected));
+    assert_eq!(read(&stream), selected);
+    drop(stream);
+    drop(service);
+    let service = start();
+    let stream = connect();
+    assert_eq!(read(&stream), selected);
+    drop(stream);
+    drop(service);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn the_service_follows_a_fake_session_through_new_sessions_and_game_restarts() {
     let Some((_pad, node)) = virtual_pad() else {
         eprintln!("skipped: /dev/uinput is not writable, so no virtual pad");

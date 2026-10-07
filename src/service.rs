@@ -10,6 +10,7 @@ pub mod any_map;
 pub mod interface;
 pub mod pointer;
 pub mod smashcraft;
+pub mod settings;
 
 use crate::model;
 use serde_json::Value;
@@ -409,6 +410,7 @@ pub fn find_pad(dir: &Path) -> Option<Pad> {
 // ---- Running it ----
 
 pub struct Config {
+    pub settings_file: PathBuf,
     /// The X11 display Warcraft III runs on.
     pub display: String,
     /// Where the pads' stable links are.
@@ -429,6 +431,7 @@ impl Default for Config {
     fn default() -> Self {
         let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
         Self {
+            settings_file: settings::default_path(),
             display: ":0".into(),
             pads: "/dev/input/by-id".into(),
             helper: std::env::current_exe().unwrap_or_else(|_| "wc3-journal".into()),
@@ -483,8 +486,7 @@ pub fn run(config: &Config, profile: &mut dyn Profile, stop: &AtomicBool, mut re
         eprintln!("service: windows connect to {}", interface.address);
     }
     let mut choice = model::ProfileChoice::Auto;
-    let mut pad_preset = model::PadPreset::Standard;
-    let mut tap_jump = false;
+    let mut settings = settings::load(&config.settings_file)?;
     let mut bindings = any_map::default_bindings();
     // The running Any map output's feed; the pad watcher sends every state to it.
     let feed: Arc<Mutex<Option<mpsc::Sender<any_map::Feed>>>> = Arc::new(Mutex::new(None));
@@ -581,21 +583,9 @@ pub fn run(config: &Config, profile: &mut dyn Profile, stop: &AtomicBool, mut re
         if let Some(interface) = &interface {
             for message in interface.commands() {
                 match message {
-                    model::ClientMessage::TapJump(enabled) => {
-                        if enabled != tap_jump {
-                            tap_jump = enabled;
-                            if let Some(current) = running.take() { stop_child(current); }
-                            status.helper = None;
-                            supervisor = Supervisor::default();
-                            if any_map_running.as_ref().is_some_and(|(_, _, kind, ..)| *kind == any_map::Kind::Keys) {
-                                if let Some((_, _, _, stop, _)) = any_map_running.take() { stop.store(true, Ordering::Relaxed); }
-                                *feed.lock().unwrap() = None;
-                            }
-                        }
-                    }
-                    model::ClientMessage::PadPreset(preset) => {
-                        if preset != pad_preset {
-                            pad_preset = preset;
+                    message @ (model::ClientMessage::TapJump(_) | model::ClientMessage::PadPreset(_) | model::ClientMessage::TriggerShields(_)) => {
+                        if settings.apply(&message) {
+                            settings::save(&config.settings_file, &settings)?;
                             if let Some(current) = running.take() { stop_child(current); }
                             status.helper = None;
                             supervisor = Supervisor::default();
@@ -681,7 +671,7 @@ pub fn run(config: &Config, profile: &mut dyn Profile, stop: &AtomicBool, mut re
                 let (stop, focused) = (Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false)));
                 let mode = match kind {
                     any_map::Kind::Menu => any_map::Mode::Menu { start_on_keys: keys },
-                    any_map::Kind::Keys => any_map::Mode::Keys(pad_preset, tap_jump),
+                    any_map::Kind::Keys => any_map::Mode::Keys(settings),
                     any_map::Kind::AnyMap => any_map::Mode::AnyMap(bindings.clone()),
                 };
                 any_map::spawn(window.clone(), mode, receive, Arc::clone(&stop), Arc::clone(&focused));
@@ -710,8 +700,9 @@ pub fn run(config: &Config, profile: &mut dyn Profile, stop: &AtomicBool, mut re
                 let args = profile.args(game, pad, session);
                 let mut command = Command::new(&config.helper);
                 command.args(&args).stdin(Stdio::null()).stderr(Stdio::piped());
-                command.args(["--preset", pad_preset.name()]);
-                command.args(["--tap-jump", if tap_jump { "on" } else { "off" }]);
+                command.args(["--preset", settings.pad_preset.name()]);
+                command.args(["--tap-jump", if settings.tap_jump { "on" } else { "off" }]);
+                command.args(["--left-trigger", settings.triggers.left.name(), "--right-trigger", settings.triggers.right.name()]);
                 command.env("WC3_SERVICE_PID", std::process::id().to_string());
                 if let Target::Window { niri_socket, display, .. } = &game.target {
                     command.env("NIRI_SOCKET", niri_socket).env("DISPLAY", display);
@@ -747,7 +738,9 @@ pub fn run(config: &Config, profile: &mut dyn Profile, stop: &AtomicBool, mut re
         publish(&status, &mut written);
         if let Some(interface) = &interface {
             let any_map = any_map_running.as_ref().filter(|(_, _, kind, ..)| *kind == any_map::Kind::AnyMap).map(|(.., focused)| focused.load(Ordering::Relaxed));
-            interface.status(&snapshot(&status, choice, resolved, any_map));
+            let mut snapshot = snapshot(&status, choice, resolved, any_map);
+            snapshot.settings = settings;
+            interface.status(&snapshot);
         }
         // Without a game, looking once a second is enough and costs little.
         // The menu pointer must stop promptly when play begins.
@@ -771,6 +764,7 @@ pub fn run(config: &Config, profile: &mut dyn Profile, stop: &AtomicBool, mut re
 /// `any_map` is the Any map output's focus while it runs.
 pub fn snapshot(status: &Status, choice: model::ProfileChoice, profile: model::Profile, any_map: Option<bool>) -> model::Snapshot {
     model::Snapshot {
+        settings: model::ControllerSettings::default(),
         pad: status.pad.as_ref().map(|pad| model::Pad {
             name: pad.name.clone(),
             id: pad.link.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default(),

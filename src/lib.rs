@@ -159,6 +159,9 @@ pub struct EventMapper {
 }
 
 impl EventMapper {
+    pub fn set_trigger_shields(&mut self, triggers: model::TriggerShields) {
+        self.mapper.set_trigger_shields(triggers);
+    }
     pub fn set_tap_jump(&mut self, enabled: bool) {
         self.mapper.set_tap_jump(enabled);
     }
@@ -229,9 +232,13 @@ pub struct Mapper {
     armed: bool,
     preset: model::PadPreset,
     tap_jump: bool,
+    triggers: model::TriggerShields,
 }
 
 impl Mapper {
+    pub fn set_trigger_shields(&mut self, triggers: model::TriggerShields) {
+        self.triggers = triggers;
+    }
     pub fn set_tap_jump(&mut self, enabled: bool) {
         self.tap_jump = enabled;
     }
@@ -263,9 +270,11 @@ impl Mapper {
             (Action::Grab, if self.preset == model::PadPreset::ZJump { sample.b } else { sample.rb }),
             (
                 Action::Shield,
-                sample.right_trigger > TRIGGER_THRESHOLD,
+                (sample.left_trigger > TRIGGER_THRESHOLD && self.triggers.left == model::TriggerShield::Full)
+                    || (sample.right_trigger > TRIGGER_THRESHOLD && self.triggers.right == model::TriggerShield::Full),
             ),
-            (Action::LightShield, sample.left_trigger > TRIGGER_THRESHOLD),
+            (Action::LightShield, (sample.left_trigger > TRIGGER_THRESHOLD && self.triggers.left == model::TriggerShield::Light)
+                || (sample.right_trigger > TRIGGER_THRESHOLD && self.triggers.right == model::TriggerShield::Light)),
             (Action::Walk, sample.lb),
             (Action::Start, sample.start),
             (Action::Left, left_x < 0),
@@ -363,6 +372,7 @@ mod tests {
     #[test]
     fn light_and_full_shield_hold_independently() {
         let mut map = armed();
+        map.set_trigger_shields(model::TriggerShields { left: model::TriggerShield::Light, ..model::TriggerShields::default() });
         let mut s = Sample {
             left_trigger: 20000,
             ..Sample::default()
@@ -481,7 +491,7 @@ mod tests {
             tick(&mut map, &held);
             assert_eq!(
                 map.update(if disconnect { None } else { Some(&held) }, disconnect),
-                vec![edge(Action::Attack, false), edge(Action::LightShield, false)]
+                vec![edge(Action::Attack, false), edge(Action::Shield, false)]
             );
             assert!(!map.armed());
             assert!(tick(&mut map, &held).is_empty());
@@ -490,7 +500,7 @@ mod tests {
             assert!(map.armed());
             assert_eq!(
                 tick(&mut map, &held),
-                vec![edge(Action::Attack, true), edge(Action::LightShield, true)]
+                vec![edge(Action::Attack, true), edge(Action::Shield, true)]
             );
         }
     }
@@ -525,7 +535,7 @@ mod tests {
         let keys: BTreeSet<_> = tick(&mut map, &s).iter().map(|t| t.action.key()).collect();
         assert_eq!(
             keys,
-            ['n', 'u', 'o', 'p', 'y', 'w', 'e', 'm', 't']
+            ['n', 'u', 'o', 'p', 'y', 'w', 'e', 'm', 'q']
                 .into_iter()
                 .collect()
         );
@@ -633,14 +643,44 @@ mod tests {
         );
         assert_eq!(
             capture(&mut mapper, &axis(5, 1, Axis::TriggerLeft, 20_000), 1),
-            vec![edge(Action::LightShield, true)]
+            vec![edge(Action::Shield, true)]
         );
-        assert_eq!(capture(&mut mapper, &axis(6, 1, Axis::TriggerRight, 20_000), 1), vec![edge(Action::Shield, true)]);
-        assert_eq!(capture(&mut mapper, &axis(7, 1, Axis::TriggerLeft, 0), 1), vec![edge(Action::LightShield, false)]);
+        assert!(capture(&mut mapper, &axis(6, 1, Axis::TriggerRight, 20_000), 1).is_empty());
+        assert!(capture(&mut mapper, &axis(7, 1, Axis::TriggerLeft, 0), 1).is_empty());
         assert_eq!(
             capture(&mut mapper, &axis(8, 1, Axis::TriggerRight, 0), 1),
             vec![edge(Action::Shield, false)]
         );
+    }
+
+    #[test]
+    fn both_layouts_map_jump_grab_and_all_four_trigger_choices() {
+        use model::{PadPreset, TriggerShield, TriggerShields};
+        let action = |mode| if mode == TriggerShield::Full { Action::Shield } else { Action::LightShield };
+        for preset in [PadPreset::Standard, PadPreset::ZJump] {
+            for left in [TriggerShield::Full, TriggerShield::Light] {
+                for right in [TriggerShield::Full, TriggerShield::Light] {
+                    let mut map = Mapper::new(preset);
+                    map.set_trigger_shields(TriggerShields { left, right });
+                    tick(&mut map, &Sample::default());
+                    for (sample, expected) in [
+                        (Sample { b: true, ..Sample::default() }, if preset == PadPreset::Standard { Action::Jump } else { Action::Grab }),
+                        (Sample { rb: true, ..Sample::default() }, if preset == PadPreset::Standard { Action::Grab } else { Action::Jump }),
+                    ] {
+                        assert_eq!(tick(&mut map, &sample), vec![edge(expected, true)]);
+                        assert_eq!(tick(&mut map, &Sample::default()), vec![edge(expected, false)]);
+                    }
+                    let mut sample = Sample { left_trigger: 20_000, ..Sample::default() };
+                    assert_eq!(tick(&mut map, &sample), vec![edge(action(left), true)]);
+                    sample.right_trigger = 20_000;
+                    assert_eq!(tick(&mut map, &sample), if left == right { vec![] } else { vec![edge(action(right), true)] });
+                    sample.left_trigger = 0;
+                    assert_eq!(tick(&mut map, &sample), if left == right { vec![] } else { vec![edge(action(left), false)] });
+                    sample.right_trigger = 0;
+                    assert_eq!(tick(&mut map, &sample), vec![edge(action(right), false)]);
+                }
+            }
+        }
     }
 
     #[test]

@@ -296,7 +296,7 @@ pub enum Mode {
     /// Smashcraft played on keys: the controller-as-keys mapper of
     /// `wc3-controller --emit` ([`crate::Mapper`]), whose keys are the map's
     /// standard key layout (README, "Xbox mapping").
-    Keys(model::PadPreset, bool),
+    Keys(model::ControllerSettings),
 }
 
 /// Which output runs, for the service to compare and log.
@@ -373,13 +373,16 @@ pub fn spawn(window: Window, mode: Mode, feed: mpsc::Receiver<Feed>, stop: Arc<A
                 let width = niri_window_width(&window.niri_socket, window.niri_window).unwrap_or(2560.0);
                 Driver::menu(MenuCurve::for_window_width(width), start_on_keys)
             }
-            Mode::Keys(preset, tap_jump) => {
+            Mode::Keys(settings) => {
                 let route = match crate::pad_ingress::Route::from_env() {
                     Ok(route) => route,
                     Err(error) => { eprintln!("service: {error}"); return; }
                 };
-                let mut driver = Driver::keys_with_ingress(preset, route);
-                if let Some(mapper) = &mut driver.keys { mapper.set_tap_jump(tap_jump); }
+                let mut driver = Driver::keys_with_ingress(settings.pad_preset, route);
+                if let Some(mapper) = &mut driver.keys {
+                    mapper.set_tap_jump(settings.tap_jump);
+                    mapper.set_trigger_shields(settings.triggers);
+                }
                 driver
             },
         };
@@ -480,7 +483,7 @@ mod tests {
         driver.step(&pad, true, 0.1, &mut out).unwrap();
         let mut pressed = take(&mut out);
         pressed.sort();
-        assert_eq!(pressed, ["down j", "down t", "down w"]);
+        assert_eq!(pressed, ["down j", "down q", "down w"]);
         // Focus loss releases them; back in focus nothing presses until the pad is neutral.
         driver.step(&pad, false, 0.0, &mut out).unwrap();
         assert_eq!(take(&mut out).len(), 3);
@@ -513,15 +516,23 @@ mod tests {
 
     #[test]
     fn the_keys_mapper_and_the_shown_smashcraft_layout_agree() {
-        let shown: std::collections::BTreeSet<String> = model::smashcraft_bindings().into_iter()
-            .filter_map(|binding| match binding.press { Press::Key(key) => Some(key), _ => None })
-            .collect();
-        let pressed: std::collections::BTreeSet<String> = [
-            crate::Action::Attack, crate::Action::Special, crate::Action::Jump, crate::Action::Grab, crate::Action::Shield, crate::Action::LightShield, crate::Action::Walk,
-            crate::Action::Start, crate::Action::Left, crate::Action::Right, crate::Action::Down, crate::Action::Up,
-            crate::Action::CLeft, crate::Action::CRight, crate::Action::CUp, crate::Action::CDown,
-        ].into_iter().map(|action| match action.key() { ' ' => "space".to_owned(), key => key.to_string() }).collect();
-        assert_eq!(pressed, shown);
+        for left in [model::TriggerShield::Full, model::TriggerShield::Light] {
+            for right in [model::TriggerShield::Full, model::TriggerShield::Light] {
+                let triggers = model::TriggerShields { left, right };
+                let shown: std::collections::BTreeSet<String> = model::smashcraft_bindings_with(model::PadPreset::Standard, triggers).into_iter()
+                    .filter_map(|binding| match binding.press { Press::Key(key) => Some(key), _ => None }).collect();
+                let pressed: std::collections::BTreeSet<String> = [
+                    crate::Action::Attack, crate::Action::Special, crate::Action::Jump, crate::Action::Grab, crate::Action::Shield, crate::Action::LightShield, crate::Action::Walk,
+                    crate::Action::Start, crate::Action::Left, crate::Action::Right, crate::Action::Down, crate::Action::Up,
+                    crate::Action::CLeft, crate::Action::CRight, crate::Action::CUp, crate::Action::CDown,
+                ].into_iter().filter(|action| match action {
+                    crate::Action::Shield => left == model::TriggerShield::Full || right == model::TriggerShield::Full,
+                    crate::Action::LightShield => left == model::TriggerShield::Light || right == model::TriggerShield::Light,
+                    _ => true,
+                }).map(|action| match action.key() { ' ' => "space".to_owned(), key => key.to_string() }).collect();
+                assert_eq!(pressed, shown);
+            }
+        }
     }
 
     #[test]

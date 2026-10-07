@@ -63,6 +63,7 @@ mod linux {
     struct State {
         preset: wc3_controller::model::PadPreset,
         tap_jump: bool,
+        triggers: wc3_controller::model::TriggerShields,
         sources: u32,
         x: i16,
         y: i16,
@@ -90,6 +91,7 @@ mod linux {
     struct Options {
         preset: wc3_controller::model::PadPreset,
         tap_jump: bool,
+        triggers: wc3_controller::model::TriggerShields,
         device: PathBuf,
         out: PathBuf,
         build: String,
@@ -860,9 +862,9 @@ mod linux {
     }
 
     fn usage() -> &'static str {
-        "wc3-journal --service [--display :0] [--pads /dev/input/by-id] [--status FILE] [--interface 127.0.0.1:47631|off] [--headless DOCUMENTS]\n\
+        "wc3-journal --service [--display :0] [--pads /dev/input/by-id] [--status FILE] [--settings FILE] [--interface 127.0.0.1:47631|off] [--headless DOCUMENTS]\n\
          Always on: finds Warcraft III on the display, the controller and the map's session, and keeps a helper serving them.\n\
-         wc3-journal --follow-matches --build BUILD --slot N [--epoch N] [--menu-keys all|start] [--preset standard|z-jump] [--tap-jump on|off] --device /dev/input/eventN --out DIR --editbox-display :N [--trace]\n\
+         wc3-journal --follow-matches --build BUILD --slot N [--epoch N] [--menu-keys all|start] [--preset standard|z-jump] [--tap-jump on|off] [--left-trigger full|light] [--right-trigger full|light] --device /dev/input/eventN --out DIR --editbox-display :N [--trace]\n\
          Start in character selection; stick left/right chooses, A selects, X backs, Start confirms. Follows matches and rematches.\n\
          Diagnostic only: wc3-journal --device /dev/input/eventN --out DIR --ready-file PATH --epoch-monotonic-ns NS [--mailbox-display :N | --editbox-display :N] [--first-frame N] [--stop-frame N] [--trace]\n\
          Keyboard output also requires --x11-window DECIMAL_ID --pid PID and exactly one of --niri-window ID / --private-wlr-app-id ID.\n\
@@ -1056,6 +1058,10 @@ mod linux {
             return Err("--build must be 1..80 ASCII letters, digits, '-' or '_'".into());
         }
         Ok(Options {
+            triggers: wc3_controller::model::TriggerShields {
+                left: wc3_controller::model::TriggerShield::parse(values.get("--left-trigger").map(String::as_str).unwrap_or("full"))?,
+                right: wc3_controller::model::TriggerShield::parse(values.get("--right-trigger").map(String::as_str).unwrap_or("full"))?,
+            },
             tap_jump: match values.get("--tap-jump").cloned().or_else(|| env::var("WC3_TAP_JUMP").ok()).as_deref().unwrap_or("off") { "on" => true, "off" => false, _ => return Err("--tap-jump needs on or off".into()) },
             preset: wc3_controller::model::PadPreset::parse(values.get("--preset").cloned().or_else(|| env::var("WC3_PAD_PRESET").ok()).as_deref().unwrap_or("standard"))?,
             device: take("--device")?.into(),
@@ -2137,14 +2143,20 @@ mod linux {
 
     #[test]
     fn journal_presets_map_jump_grab_and_digital_shield_pressure() {
-        use wc3_controller::model::PadPreset;
+        use wc3_controller::model::{PadPreset, TriggerShield, TriggerShields};
         for (preset, b, rb) in [(PadPreset::Standard, JUMP, GRAB), (PadPreset::ZJump, GRAB, JUMP)] {
             let state = State { preset, ..State::default() };
             assert_eq!(action_state(State { sources: 1 << 1, ..state }), b);
             assert_eq!(action_state(State { sources: 1 << 5, ..state }), rb);
             assert_eq!(action_state(State { sources: 1 << 3, ..state }), JUMP);
-            for (lt, rt, held, pressure) in [(20_000, 0, LEFT_TRIGGER, 77 * 256), (0, 20_000, RIGHT_TRIGGER, 255), (20_000, 20_000, LEFT_TRIGGER | RIGHT_TRIGGER, 77 * 256 + 255)] {
-                assert_eq!(encode_row(State { lt, rt, ..state }, 0, Edges::default()), format!("B{}{}000{}", compact(held, 3), compact(held, 3), compact(pressure, 3)));
+            for left in [TriggerShield::Full, TriggerShield::Light] {
+                for right in [TriggerShield::Full, TriggerShield::Light] {
+                    let state = State { triggers: TriggerShields { left, right }, ..state };
+                    let (left, right) = (u32::from(left.pressure()), u32::from(right.pressure()));
+                    for (lt, rt, held, pressure) in [(20_000, 0, LEFT_TRIGGER, left * 256), (0, 20_000, RIGHT_TRIGGER, right), (20_000, 20_000, LEFT_TRIGGER | RIGHT_TRIGGER, left * 256 + right)] {
+                        assert_eq!(encode_row(State { lt, rt, ..state }, 0, Edges::default()), format!("B{}{}000{}", compact(held, 3), compact(held, 3), compact(pressure, 3)));
+                    }
+                }
             }
             let mut held = State { sources: 1 << 5, ..state };
             let mut edges = BTreeMap::new();
@@ -2178,8 +2190,8 @@ mod linux {
             flags |= 4;
             body.push_str(&compact(axes, 3));
         }
-        let lt = if state.lt > 4_000 { 77 } else { 0 };
-        let rt = if state.rt > 4_000 { 255 } else { 0 };
+        let lt = if state.lt > 4_000 { u32::from(state.triggers.left.pressure()) } else { 0 };
+        let rt = if state.rt > 4_000 { u32::from(state.triggers.right.pressure()) } else { 0 };
         let triggers = lt * 256 + rt;
         if triggers != 0 {
             flags |= 8;
@@ -3280,7 +3292,7 @@ mod linux {
             return Err("focus release exceeds supported frame range".into());
         }
         edges.entry(frame).or_default().released |= action_state(*state);
-        *state = State { preset: state.preset, tap_jump: state.tap_jump, ..State::default() };
+        *state = State { preset: state.preset, tap_jump: state.tap_jump, triggers: state.triggers, ..State::default() };
         snapshots.insert(frame, *state);
         Ok(frame)
     }
@@ -4000,8 +4012,9 @@ mod linux {
         let (mut axes, mut physical, mut start_held) = device_snapshot(&device).map_err(|e| e.to_string())?;
         physical.preset = o.preset;
         physical.tap_jump = o.tap_jump;
+        physical.triggers = o.triggers;
         let mut capture_axes = axes;
-        let mut state = State { preset: o.preset, tap_jump: o.tap_jump, ..State::default() };
+        let mut state = State { preset: o.preset, tap_jump: o.tap_jump, triggers: o.triggers, ..State::default() };
         let identity = DeviceIdentity::of(&device);
         let labels = FaceLabels::of(device.input_id());
         let can_reconnect = identity.reconnectable()
@@ -4073,7 +4086,7 @@ mod linux {
                     stop_capture = false;
                     ended = false;
                     end_marker_sent = false;
-                    state = State { preset: o.preset, tap_jump: o.tap_jump, ..State::default() };
+                    state = State { preset: o.preset, tap_jump: o.tap_jump, triggers: o.triggers, ..State::default() };
                     row_state = state;
                     previous = 0;
                     edges.clear();
@@ -4155,6 +4168,7 @@ mod linux {
                         Ok(Some((replacement, (ranges, mut physical, start)))) => {
                             physical.preset = o.preset;
                             physical.tap_jump = o.tap_jump;
+                            physical.triggers = o.triggers;
                             let ns = monotonic_ns().map_err(|e| e.to_string())?;
                             capture_axes = ranges;
                             start_held = start;
@@ -4184,9 +4198,9 @@ mod linux {
                     device = None;
                     recovery.ready = false;
                     start_held = false;
-                    menu_input.observe(None, State { preset: o.preset, tap_jump: o.tap_jump, ..State::default() }, false, ns);
+                    menu_input.observe(None, State { preset: o.preset, tap_jump: o.tap_jump, triggers: o.triggers, ..State::default() }, false, ns);
                     if waiting_ready {
-                        focus_input.restore(State { preset: o.preset, tap_jump: o.tap_jump, ..State::default() }, false, ns, false);
+                        focus_input.restore(State { preset: o.preset, tap_jump: o.tap_jump, triggers: o.triggers, ..State::default() }, false, ns, false);
                         focus_input.armed = false;
                     } else {
                         pending_input.push_capture(Capture::Disconnected(ns))?;
@@ -4315,8 +4329,8 @@ mod linux {
                         epoch_ns: now,
                         first_frame: next_frame,
                     };
-                    state = State { preset: o.preset, tap_jump: o.tap_jump, ..State::default() };
-                    row_state = State { preset: o.preset, tap_jump: o.tap_jump, ..State::default() };
+                    state = State { preset: o.preset, tap_jump: o.tap_jump, triggers: o.triggers, ..State::default() };
+                    row_state = State { preset: o.preset, tap_jump: o.tap_jump, triggers: o.triggers, ..State::default() };
                     previous = 0;
                     edges.clear();
                     snapshots.clear();
@@ -4339,8 +4353,8 @@ mod linux {
                         epoch_ns: publication.epoch_ns,
                         first_frame: next_frame,
                     };
-                    state = State { preset: o.preset, tap_jump: o.tap_jump, ..State::default() };
-                    row_state = State { preset: o.preset, tap_jump: o.tap_jump, ..State::default() };
+                    state = State { preset: o.preset, tap_jump: o.tap_jump, triggers: o.triggers, ..State::default() };
+                    row_state = State { preset: o.preset, tap_jump: o.tap_jump, triggers: o.triggers, ..State::default() };
                     previous = 0;
                     edges.clear();
                     snapshots.clear();
@@ -4391,7 +4405,7 @@ mod linux {
                             );
                             eprintln!("controller_release mono_ns={ns} frame={frame}");
                         }
-                        focus_input.restore(State { preset: o.preset, tap_jump: o.tap_jump, ..State::default() }, false, ns, false);
+                        focus_input.restore(State { preset: o.preset, tap_jump: o.tap_jump, triggers: o.triggers, ..State::default() }, false, ns, false);
                         focus_input.armed = false;
                         continue;
                     }
@@ -4615,6 +4629,7 @@ mod linux {
                 "--display" => config.display = value()?,
                 "--pads" => config.pads = value()?.into(),
                 "--status" => config.status_file = Some(value()?.into()),
+                "--settings" => config.settings_file = value()?.into(),
                 "--helper" => config.helper = value()?.into(),
                 "--headless" => config.headless = Some(value()?.into()),
                 "--interface" => config.interface = Some(value()?).filter(|address| address != "off"),

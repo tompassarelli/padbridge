@@ -24,6 +24,7 @@ pub struct Snapshot {
     pub output: Output,
     /// One plain-language sentence for the player, when something needs them.
     pub problem: Option<String>,
+    pub settings: ControllerSettings,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -184,6 +185,7 @@ pub enum ClientMessage {
     Profile(ProfileChoice),
     PadPreset(PadPreset),
     TapJump(bool),
+    TriggerShields(TriggerShields),
     /// Replaces the Any map profile's bindings.
     Bindings(Vec<Binding>),
 }
@@ -291,7 +293,58 @@ impl PadPreset {
 }
 
 pub fn smashcraft_bindings_for(preset: PadPreset) -> Vec<Binding> {
+    smashcraft_bindings_with(preset, TriggerShields::default())
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TriggerShield {
+    #[default]
+    Full,
+    Light,
+}
+
+impl TriggerShield {
+    pub fn name(self) -> &'static str { match self { Self::Full => "full", Self::Light => "light" } }
+    pub fn parse(name: &str) -> Result<Self, String> {
+        match name { "full" => Ok(Self::Full), "light" => Ok(Self::Light), _ => Err("trigger shield needs full or light".into()) }
+    }
+    pub fn pressure(self) -> u16 { match self { Self::Full => 255, Self::Light => 77 } }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TriggerShields {
+    pub left: TriggerShield,
+    pub right: TriggerShield,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ControllerSettings {
+    pub pad_preset: PadPreset,
+    pub tap_jump: bool,
+    pub triggers: TriggerShields,
+}
+
+impl ControllerSettings {
+    pub fn apply(&mut self, message: &ClientMessage) -> bool {
+        let before = *self;
+        match message {
+            ClientMessage::PadPreset(preset) => self.pad_preset = *preset,
+            ClientMessage::TapJump(on) => self.tap_jump = *on,
+            ClientMessage::TriggerShields(triggers) => self.triggers = *triggers,
+            _ => {}
+        }
+        *self != before
+    }
+}
+
+pub fn smashcraft_bindings_with(preset: PadPreset, triggers: TriggerShields) -> Vec<Binding> {
     use Control::*;
+    let shield = |control, mode| match mode {
+        TriggerShield::Full => bind(control, "Shield", key("q")),
+        TriggerShield::Light => bind(control, "Light shield", key("t")),
+    };
     vec![
         bind(A, "Attack", key("n")),
         bind(X, "Special", key("u")),
@@ -299,8 +352,8 @@ pub fn smashcraft_bindings_for(preset: PadPreset) -> Vec<Binding> {
         bind(Y, "Jump", key("i")),
         bind(Rb, if preset == PadPreset::ZJump { "Jump" } else { "Grab" }, key(if preset == PadPreset::ZJump { "i" } else { "o" })),
         bind(Lb, "Tilt", key("p")),
-        bind(Lt, "Light shield", key("t")),
-        bind(Rt, "Shield", key("q")),
+        shield(Lt, triggers.left),
+        shield(Rt, triggers.right),
         bind(Start, "Pause", key("y")),
         bind(LeftLeft, "Move left", key("w")),
         bind(LeftRight, "Move right", key("r")),
@@ -506,6 +559,7 @@ mod tests {
 
     fn playing() -> Snapshot {
         Snapshot {
+            settings: ControllerSettings::default(),
             pad: Some(Pad {
                 name: "Xbox One S pad".into(),
                 id: "usb-Microsoft_Controller-event-joystick".into(),

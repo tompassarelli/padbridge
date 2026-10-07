@@ -66,7 +66,7 @@ intended simulation frame.
 | A / X | Attack N / special U |
 | B or Y | Jump I |
 | RB / LB | Grab O / Tilt P |
-| LT / RT | Light shield T / full shield Q |
+| LT / RT | Full shield Q / full shield Q |
 | Start | Y |
 | Left stick left / right / down | W / R / E |
 | Left stick up | Space (up only; no tap jump) |
@@ -75,8 +75,17 @@ intended simulation frame.
 The standard pad preset keeps B and Y as jump and RB as grab. Select **Z-jump**
 on the Controller page to make RB and Y jump and B grab; the other controls stay
 the same. Both `wc3-controller` and `wc3-journal` accept `--preset standard|z-jump`.
-The journal also accepts `WC3_PAD_PRESET`. LT requests trigger pressure 77,
-the lightest active shield, while RT requests 255 for full shield.
+The journal also accepts `WC3_PAD_PRESET`. Both triggers shield fully by default.
+Either trigger can instead light shield: choose Full shield or Light shield for
+each trigger on the Controller page, or use `--left-trigger full|light` and
+`--right-trigger full|light` on either helper. Light shield presses T and requests
+pressure 77; full shield presses Q and requests 255.
+
+The service saves the layout, tap jump and trigger choices together in
+`$XDG_CONFIG_HOME/smashcraft/controller.json`, or `~/.config/smashcraft/controller.json`.
+It restores them at startup; a connected Controller page follows these choices
+instead of replacing them with its own defaults. `wc3-journal --service --settings FILE`
+uses another file for an isolated service.
 
 Tap jump is off by default. The Controller page can enable it, or either helper
 accepts `--tap-jump on|off` (the journal also reads `WC3_TAP_JUMP`). When enabled,
