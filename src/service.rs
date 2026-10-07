@@ -663,7 +663,7 @@ pub fn run(config: &Config, profile: &mut dyn Profile, stop: &AtomicBool, mut re
         // profile, or the pointer in the map's menus (never during play).
         let menu = resolved == model::Profile::Smashcraft && profile.pointer_menu()
             && status.helper.as_ref().is_none_or(|helper| !helper.in_match);
-        let kind = if keys { Some(any_map::Kind::Keys) } else if menu { Some(any_map::Kind::Menu) } else if resolved == model::Profile::AnyMap { Some(any_map::Kind::AnyMap) } else { None };
+        let kind = if menu { Some(any_map::Kind::Menu) } else if keys { Some(any_map::Kind::Keys) } else if resolved == model::Profile::AnyMap { Some(any_map::Kind::AnyMap) } else { None };
         let want = match (&game, &pad, kind) {
             (Some(Game { pid, target: Target::Window { display, niri_window, niri_socket, .. }, .. }), Some(_), Some(kind)) => {
                 Some((any_map::Window { display: display.clone(), niri_socket: niri_socket.clone(), niri_window: *niri_window }, *pid, kind))
@@ -680,7 +680,7 @@ pub fn run(config: &Config, profile: &mut dyn Profile, stop: &AtomicBool, mut re
                 let (send, receive) = mpsc::channel();
                 let (stop, focused) = (Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false)));
                 let mode = match kind {
-                    any_map::Kind::Menu => any_map::Mode::Menu,
+                    any_map::Kind::Menu => any_map::Mode::Menu { start_on_keys: keys },
                     any_map::Kind::Keys => any_map::Mode::Keys(pad_preset, tap_jump),
                     any_map::Kind::AnyMap => any_map::Mode::AnyMap(bindings.clone()),
                 };

@@ -53,14 +53,9 @@ pub struct MenuCurve {
 pub const MENU_DEADZONE: f64 = 0.12;
 /// Speed grows with deflection to this power: fine aim near the centre.
 pub const MENU_ACCELERATION: f64 = 1.7;
-/// Full-tilt speed in game-window heights a second. The fighter grid is 0.8
-/// of the window's height wide (selectionGrid.ts: 0.48 of the 0.6-high UI), so
-/// full tilt crosses it in 0.8 / 1.15 = 0.7 s.
-pub const MENU_HEIGHTS_PER_SECOND: f64 = 1.15;
-
 impl MenuCurve {
-    pub fn for_window_height(height: f64) -> Self {
-        Self { full_speed: height * MENU_HEIGHTS_PER_SECOND }
+    pub fn for_window_width(width: f64) -> Self {
+        Self { full_speed: width }
     }
 
     /// Pointer velocity for a stick position (SDL axes, y down positive).
@@ -76,11 +71,11 @@ impl MenuCurve {
     }
 }
 
-/// The menu pointer's clicks (model::smashcraft_menu_bindings); the stick is
-/// the curve's, and the helper keeps Start.
-pub fn menu_bindings() -> Vec<Binding> {
+/// Journal sessions send Start through their helper; keyboard sessions send it here.
+pub fn menu_bindings(start_on_keys: bool) -> Vec<Binding> {
     model::smashcraft_menu_bindings().into_iter()
-        .filter(|binding| matches!(binding.press, model::Press::LeftClick | model::Press::RightClick))
+        .filter(|binding| matches!(binding.press, model::Press::LeftClick | model::Press::RightClick)
+            || (start_on_keys && binding.control == model::Control::Start))
         .collect()
 }
 
@@ -100,8 +95,8 @@ impl Driver {
     }
 
     /// The menu pointer: the left stick moves the pointer by `curve`, A and B click.
-    pub fn menu(curve: MenuCurve) -> Self {
-        Self { mapper: Mapper::new(menu_bindings()), focused: false, menu: Some(curve), keys: None, analog: crate::pad_ingress::Ingress::new(crate::pad_ingress::Route::Digital) }
+    pub fn menu(curve: MenuCurve, start_on_keys: bool) -> Self {
+        Self { mapper: Mapper::new(menu_bindings(start_on_keys)), focused: false, menu: Some(curve), keys: None, analog: crate::pad_ingress::Ingress::new(crate::pad_ingress::Route::Digital) }
     }
 
     /// Smashcraft on keys. Focus loss releases every key, and nothing presses
@@ -262,8 +257,8 @@ impl crate::pad_ingress::Output for DesktopOutput {
     fn cursor(&mut self, x: f64, y: f64, width: u32, height: u32) -> Result<(), String> { Output::cursor(self, x, y, width, height) }
 }
 
-/// The game window's height in logical pixels, as niri lays it out.
-pub fn niri_window_height(socket: &Path, window: u64) -> Option<f64> {
+/// The game window's width in logical pixels, as niri lays it out.
+pub fn niri_window_width(socket: &Path, window: u64) -> Option<f64> {
     let mut stream = UnixStream::connect(socket).ok()?;
     stream.set_read_timeout(Some(Duration::from_millis(200))).ok()?;
     writeln!(stream, "\"Windows\"").ok()?;
@@ -273,7 +268,7 @@ pub fn niri_window_height(socket: &Path, window: u64) -> Option<f64> {
     let parsed: Value = serde_json::from_str(&reply).ok()?;
     parsed.pointer("/Ok/Windows")?.as_array()?.iter()
         .find(|entry| entry.get("id").and_then(Value::as_u64) == Some(window))?
-        .pointer("/layout/window_size/1")?.as_f64()
+        .pointer("/layout/window_size/0")?.as_f64()
 }
 
 /// Whether niri's focused window is `window`; any failure reads as not focused.
@@ -297,7 +292,7 @@ pub fn niri_focused(socket: &Path, window: u64) -> bool {
 pub enum Mode {
     AnyMap(Vec<Binding>),
     /// Smashcraft's menus: pointer and clicks only.
-    Menu,
+    Menu { start_on_keys: bool },
     /// Smashcraft played on keys: the controller-as-keys mapper of
     /// `wc3-controller --emit` ([`crate::Mapper`]), whose keys are the map's
     /// standard key layout (README, "Xbox mapping").
@@ -374,9 +369,9 @@ pub fn spawn(window: Window, mode: Mode, feed: mpsc::Receiver<Feed>, stop: Arc<A
         };
         let mut driver = match mode {
             Mode::AnyMap(bindings) => Driver::new(bindings),
-            Mode::Menu => {
-                let height = niri_window_height(&window.niri_socket, window.niri_window).unwrap_or(1440.0);
-                Driver::menu(MenuCurve::for_window_height(height))
+            Mode::Menu { start_on_keys } => {
+                let width = niri_window_width(&window.niri_socket, window.niri_window).unwrap_or(2560.0);
+                Driver::menu(MenuCurve::for_window_width(width), start_on_keys)
             }
             Mode::Keys(preset, tap_jump) => {
                 let route = match crate::pad_ingress::Route::from_env() {
@@ -482,7 +477,7 @@ mod tests {
         pad.lt = 20000;
         pad.left = [-32767, 0];
         pad.right = [0, -32767];
-        driver.step(&pad, true, 0.0, &mut out).unwrap();
+        driver.step(&pad, true, 0.1, &mut out).unwrap();
         let mut pressed = take(&mut out);
         pressed.sort();
         assert_eq!(pressed, ["down 9", "down j", "down w"]);
@@ -593,23 +588,22 @@ mod tests {
 
     #[test]
     fn in_smashcraft_menus_the_left_stick_moves_the_pointer_by_deflection_and_a_clicks() {
-        let curve = MenuCurve::for_window_height(1440.0);
-        let (mut driver, mut out) = (Driver::menu(curve), Recorded::default());
+        let curve = MenuCurve::for_window_width(2560.0);
+        let (mut driver, mut out) = (Driver::menu(curve, false), Recorded::default());
         let mut pad = InputView::default();
         driver.step(&pad, true, 0.0, &mut out).unwrap();
         // Inside the small deadzone: still.
         pad.left = [3900, 0];
         driver.step(&pad, true, 0.1, &mut out).unwrap();
         assert!(take(&mut out).is_empty());
-        // Half tilt is well under half speed; full tilt crosses the grid
-        // (0.8 of the height) in about 0.7 s.
+        // Half tilt is well under half speed; full tilt crosses the screen in one second.
         pad.left = [16384, 0];
         driver.step(&pad, true, 0.1, &mut out).unwrap();
         pad.left = [32767, 0];
         driver.step(&pad, true, 0.1, &mut out).unwrap();
-        assert_eq!(take(&mut out), ["move 40,0", "move 166,0"]);
-        let crossing = 0.8 * 1440.0 / curve.velocity([32767, 0]).0;
-        assert!((0.6..=0.8).contains(&crossing), "{crossing}");
+        assert_eq!(take(&mut out), ["move 61,0", "move 256,0"]);
+        let crossing = 2560.0 / curve.velocity([32767, 0]).0;
+        assert!((0.9..=1.1).contains(&crossing), "{crossing}");
         // Diagonals keep their direction; up is negative y.
         let (vx, vy) = curve.velocity([-23170, -23170]);
         assert!(vx < 0.0 && (vx - vy).abs() < 1e-9);
@@ -626,6 +620,15 @@ mod tests {
         pad.left = [32767, 0];
         driver.step(&pad, false, 0.1, &mut out).unwrap();
         assert_eq!(take(&mut out), ["up right-click"]);
+        // A keyboard build keeps its Start mapping without a journal helper.
+        let mut driver = Driver::menu(curve, true);
+        let mut pad = InputView::default();
+        driver.step(&pad, true, 0.0, &mut out).unwrap();
+        pad.press(Button::Start, true);
+        driver.step(&pad, true, 0.0, &mut out).unwrap();
+        pad.press(Button::Start, false);
+        driver.step(&pad, true, 0.0, &mut out).unwrap();
+        assert_eq!(take(&mut out), ["down y", "up y"]);
     }
 
     #[test]

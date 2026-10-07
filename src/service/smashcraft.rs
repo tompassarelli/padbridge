@@ -9,7 +9,7 @@
 //! so it gets a new session key and a fresh helper.
 //!
 //! A build that reads keyboard input (the playable build, #166)
-//! publishes no menu. Its ready file `CustomMapData/wc3-melee-ready.txt`,
+//! also publishes menus. Its ready file `CustomMapData/wc3-melee-ready.txt`,
 //! written at fighter selection, names the build and its keyboard profile: that
 //! session plays on keys, so the service runs no helper and presses the
 //! controller's keys itself ([`super::any_map::Mode::Keys`]).
@@ -174,7 +174,7 @@ impl Profile for Smashcraft {
         }
         let keys = keys_session(&data)
             .filter(|keys| started.is_none_or(|at| keys.modified >= at))
-            .filter(|keys| self.tracker.menu().is_none_or(|menu| keys.modified > menu.modified));
+            .filter(|keys| self.tracker.menu().is_none_or(|menu| keys.build == menu.build || keys.modified > menu.modified));
         if keys.as_ref().map(|keys| keys.modified) != self.keys.as_ref().map(|keys| keys.modified) && keys.is_some() {
             self.keys_generation += 1;
         }
@@ -183,8 +183,8 @@ impl Profile for Smashcraft {
             Some(keys) => Some(Session {
                 key: format!("{}/keys/{}", keys.build, self.keys_generation),
                 summary: format!("Smashcraft {} on keys", keys.build),
-                // The ready file names no menu phase or player.
-                shown: None,
+                shown: self.tracker.menu().filter(|menu| menu.build == keys.build)
+                    .and_then(|_| self.tracker.session()).and_then(|session| session.shown),
             }),
             None => self.tracker.session(),
         }
@@ -216,8 +216,9 @@ impl Profile for Smashcraft {
     /// Fighter, stage and results menus, while the map keeps publishing them
     /// (it refreshes an open menu every 250 ms and publishes BLOCKED for play).
     fn pointer_menu(&self) -> bool {
-        self.keys.is_none() && self.tracker.menu().is_some_and(|menu| {
-            matches!(menu.phase.as_str(), "CHARACTER" | "STAGE" | "RESULT")
+        self.tracker.menu().is_some_and(|menu| {
+            self.keys.as_ref().is_none_or(|keys| keys.build == menu.build)
+                && matches!(menu.phase.as_str(), "CHARACTER" | "STAGE" | "RESULT")
                 && SystemTime::now().duration_since(menu.modified).is_ok_and(|age| age <= std::time::Duration::from_secs(1))
         })
     }
@@ -357,6 +358,17 @@ mod tests {
         std::thread::sleep(Duration::from_millis(20));
         fs::write(data.join("wc3-melee-ready.txt"), READY).unwrap();
         assert_ne!(profile.session(&game).unwrap().key, first.key);
+        // This keyboard build refreshes its menus after the ready marker.
+        // It keeps its keys session but uses the pointer only in these menus.
+        let key_session = profile.session(&game).unwrap().key;
+        for (phase, pointing) in [("CHARACTER", true), ("STAGE", true), ("RESULT", true), ("BLOCKED", false)] {
+            std::thread::sleep(Duration::from_millis(20));
+            fs::write(data.join("smashcraft-journal-menu-playable-0047-s0.txt"),
+                format!("call Preload( \"SMASHCRAFT JOURNAL MENU v=1 build=playable-0047 epoch=1 slot=0 phase={phase}\" )\nendfunction\n")).unwrap();
+            assert_eq!(profile.session(&game).unwrap().key, key_session);
+            assert!(profile.keys());
+            assert_eq!(profile.pointer_menu(), pointing, "{phase}");
+        }
         // A journal map opened after it publishes a menu: that session wins.
         std::thread::sleep(Duration::from_millis(20));
         fs::write(data.join("smashcraft-journal-menu-typescript-integrity-s0.txt"),

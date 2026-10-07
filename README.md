@@ -89,13 +89,23 @@ the left stick a pointer, as the hand cursor is in Smash: it moves the desktop
 pointer over the game (the compositor's virtual pointer), A left-clicks to
 choose a tile, chip or button, B right-clicks, and Start still sends Y (stage
 selection, start). The pointer rests inside 0.12 of full deflection, speeds up
-with deflection to the power 1.7, and at full tilt moves 1.15 game-window
-heights a second, so it crosses the fighter grid (0.8 of the window's height)
-in about 0.7 s. It runs only while the map keeps publishing an open menu
+with deflection to the power 1.7, and at full tilt crosses the game window
+in one second. It runs only while the map keeps publishing an open menu
 (CHARACTER, STAGE or RESULT, refreshed every 250 ms) and the helper reports no
 match, and stops within 100 ms of the map publishing BLOCKED for play, where
 the table above applies unchanged (smashcraft:companion/src/service/any_map.rs,
 `MenuCurve`; model::smashcraft_menu_bindings).
+
+The assigned offline client's menu check uses
+`cargo test --locked --test service a_private_pad_script -- --ignored --nocapture`.
+Set `WC3_MENU_DISPLAY`, `WC3_MENU_XID`, `WC3_MENU_PID`, `WC3_MENU_APP_ID`,
+`WC3_MENU_DATA` (CustomMapData), `WC3_MENU_WIDTH` (logical pixels), and
+`WC3_MENU_SCRIPT`, alongside that private desktop's `XDG_RUNTIME_DIR`,
+`WAYLAND_DISPLAY` and `XAUTHORITY`. The script's rows are milliseconds,
+left-stick X and Y (-32768..32767), A (0/1), and Start (0/1); `#` lines are
+comments. Start with a neutral row. Menu changes use the same driver as the
+service and match phases return to the standard fighter keys. The native
+executor checks the selected fighter and match receipt after the script.
 
 Both sticks use Melee's conversion on every pad (smashcraft:companion/src/stick.rs,
 shared by wc3-controller and wc3-journal). The stick is first clamped radially
@@ -299,10 +309,10 @@ of the pad's state (read without grabbing it), and from the window
 Smashcraft menu since it started, and Any map otherwise.
 
 A build that reads keyboard input (the playable build, #166)
-publishes no menu: its ready file `CustomMapData/wc3-melee-ready.txt` names
-the build and `INPUT keyboard-d2-r24` (the development build uses `INPUT callback`). Newer than the game's start and than any menu,
+publishes menu phases too: its ready file `CustomMapData/wc3-melee-ready.txt` names
+the build and `INPUT keyboard-d2-r24` (the development build uses `INPUT callback`). Newer than the game's start and any different build's menu,
 it is a Smashcraft session on keys (`session=BUILD/keys/N`): the service
-runs no helper and presses the pad's keys itself through the same mapper as
+runs no helper, uses the pointer in fighter, stage and results menus, and presses the pad's keys during matches through the same mapper as
 `--emit` (the table above: A n, X u, B/Y i, RB o, LB p, either trigger q,
 Start y, left stick w/r/e/space, right stick b/m/j/h), into the game's window
 while niri focuses it. Focus loss releases them, and nothing presses again
