@@ -154,6 +154,7 @@ pub fn watch_pad(device: &Path, mut send: impl FnMut(&InputView)) -> Result<(), 
     let mut pad = evdev::Device::open(device).map_err(|e| format!("open {}: {e}", device.display()))?;
     let mut ranges = [(0, 0); 0x12];
     let mut view = InputView::default();
+    let positional = pad.input_id().vendor() == 0x054c;
     if let Ok(axes) = pad.get_absinfo() {
         for (code, info) in axes {
             if let Some(range) = ranges.get_mut(usize::from(code.0)) {
@@ -161,10 +162,12 @@ pub fn watch_pad(device: &Path, mut send: impl FnMut(&InputView)) -> Result<(), 
             }
         }
         for (code, info) in pad.get_absinfo().map_err(|e| e.to_string())? {
-            apply_event(&mut view, &ranges, false, 3, code.0, info.value());
+            apply_event(&mut view, &ranges, positional, 3, code.0, info.value());
         }
     }
-    let positional = pad.input_id().vendor() == 0x054c;
+    for key in pad.get_key_state().map_err(|e| e.to_string())?.iter() {
+        apply_event(&mut view, &ranges, positional, 1, key.0, 1);
+    }
     send(&view);
     loop {
         let mut changed = false;

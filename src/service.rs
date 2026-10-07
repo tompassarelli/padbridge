@@ -53,7 +53,7 @@ pub struct Game {
     pub target: Target,
 }
 
-/// The controller, found by its stable /dev/input/by-id link.
+/// The controller, found by its stable link or event node.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Pad {
     pub link: PathBuf,
@@ -172,6 +172,29 @@ pub const MENU_POLL: Duration = Duration::from_millis(100);
 pub const IDLE_POLL: Duration = Duration::from_secs(1);
 /// The wait before starting a helper again after one stopped.
 pub const RETRY: Duration = Duration::from_secs(2);
+/// Keep held output while a controller briefly disappears during rediscovery.
+const PAD_REDISCOVERY: Duration = Duration::from_secs(2);
+
+#[derive(Default)]
+struct PadDiscovery {
+    pad: Option<Pad>,
+    missing_since: Option<Instant>,
+}
+
+impl PadDiscovery {
+    fn update(&mut self, found: Option<Pad>, now: Instant) -> Option<Pad> {
+        if let Some(pad) = found {
+            self.pad = Some(pad);
+            self.missing_since = None;
+        } else if self.pad.is_some() {
+            let since = *self.missing_since.get_or_insert(now);
+            if now.duration_since(since) >= PAD_REDISCOVERY {
+                self.pad = None;
+            }
+        }
+        self.pad.clone()
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Decision {
@@ -385,9 +408,10 @@ pub fn niri_game_window(windows: &Value, pid: u32, title: &str, class: &str) -> 
     window.get("id").and_then(Value::as_u64)
 }
 
-/// The controller among `dir`'s `*-event-joystick` links: an Xbox pad first.
+/// The controller among `dir`'s joystick links, then its event nodes (Bluetooth
+/// need not have a by-id link). Prefers an Xbox pad.
 pub fn find_pad(dir: &Path) -> Option<Pad> {
-    let mut links: Vec<(bool, String)> = fs::read_dir(dir).ok()?.flatten()
+    let mut links: Vec<(bool, String)> = fs::read_dir(dir).ok().into_iter().flatten().flatten()
         .filter_map(|entry| entry.file_name().into_string().ok())
         .filter(|name| name.ends_with("-event-joystick"))
         .map(|name| {
@@ -396,7 +420,7 @@ pub fn find_pad(dir: &Path) -> Option<Pad> {
         })
         .collect();
     links.sort();
-    links.into_iter().find_map(|(_, name)| {
+    if let Some(pad) = links.into_iter().find_map(|(_, name)| {
         let link = dir.join(&name);
         let device = fs::canonicalize(&link).ok()?;
         let node = device.file_name()?.to_str()?.to_owned();
@@ -404,7 +428,27 @@ pub fn find_pad(dir: &Path) -> Option<Pad> {
             .map(|name| name.trim().to_owned())
             .unwrap_or(name);
         Some(Pad { link, device, name: pad_name })
-    })
+    }) {
+        return Some(pad);
+    }
+    let events = if dir.file_name().is_some_and(|name| name == "by-id") { dir.parent()? } else { dir };
+    let mut pads: Vec<(bool, Pad)> = fs::read_dir(events).ok()?.flatten().filter_map(|entry| {
+        let name = entry.file_name();
+        let number = name.to_str()?.strip_prefix("event")?;
+        if number.is_empty() || !number.bytes().all(|byte| byte.is_ascii_digit()) { return None; }
+        let device = fs::canonicalize(entry.path()).ok()?;
+        let pad = evdev::Device::open(&device).ok()?;
+        if !pad.supported_keys().is_some_and(|keys| keys.contains(evdev::KeyCode::BTN_SOUTH))
+            || !pad.supported_absolute_axes().is_some_and(|axes| axes.contains(evdev::AbsoluteAxisCode::ABS_X) && axes.contains(evdev::AbsoluteAxisCode::ABS_Y)) {
+            return None;
+        }
+        let name = pad.name().unwrap_or("Controller").to_owned();
+        let lower = name.to_ascii_lowercase();
+        let xbox = pad.input_id().vendor() == 0x045e || lower.contains("microsoft") || lower.contains("xbox");
+        Some((!xbox, Pad { link: entry.path(), device, name }))
+    }).collect();
+    pads.sort_by(|(a, first), (b, second)| (a, &first.link).cmp(&(b, &second.link)));
+    pads.into_iter().next().map(|(_, pad)| pad)
 }
 
 // ---- Running it ----
@@ -461,6 +505,15 @@ fn stop_child(running: Running) {
     let _ = child.wait();
 }
 
+fn output_target(game: Option<&Game>, pad: Option<&Pad>, kind: Option<any_map::Kind>) -> Option<(any_map::Window, u32, any_map::Kind)> {
+    match (game, pad, kind) {
+        (Some(Game { pid, target: Target::Window { display, niri_window, niri_socket, .. }, .. }), Some(_), Some(kind)) => {
+            Some((any_map::Window { display: display.clone(), niri_socket: niri_socket.clone(), niri_window: *niri_window }, *pid, kind))
+        }
+        _ => None,
+    }
+}
+
 /// The lock one service holds for its display (or stand-in game), so a
 /// second copy never runs a second helper typing into the same game.
 pub fn lock_path(config: &Config) -> PathBuf {
@@ -492,6 +545,7 @@ pub fn run(config: &Config, profile: &mut dyn Profile, stop: &AtomicBool, mut re
     let feed: Arc<Mutex<Option<mpsc::Sender<any_map::Feed>>>> = Arc::new(Mutex::new(None));
     let mut any_map_running: Option<(any_map::Window, u32, any_map::Kind, Arc<AtomicBool>, Arc<AtomicBool>)> = None;
     let mut watching: Option<(PathBuf, Arc<AtomicBool>)> = None;
+    let mut discovery = PadDiscovery::default();
     let mut supervisor = Supervisor::default();
     let mut running: Option<Running> = None;
     let mut status = Status { profile: profile.name().into(), ..Status::default() };
@@ -567,7 +621,7 @@ pub fn run(config: &Config, profile: &mut dyn Profile, stop: &AtomicBool, mut re
             eprintln!("service: waiting for Warcraft III on {}", config.display);
         }
         first = false;
-        let pad = find_pad(&config.pads);
+        let pad = discovery.update(find_pad(&config.pads), now);
         if pad.as_ref().map(|pad| &pad.device) != status.pad.as_ref().map(|pad| &pad.device) {
             match &pad {
                 Some(pad) => eprintln!("service: controller {} at {}", pad.name, pad.device.display()),
@@ -654,12 +708,7 @@ pub fn run(config: &Config, profile: &mut dyn Profile, stop: &AtomicBool, mut re
         let menu = resolved == model::Profile::Smashcraft && profile.pointer_menu()
             && status.helper.as_ref().is_none_or(|helper| !helper.in_match);
         let kind = if menu { Some(any_map::Kind::Menu) } else if keys { Some(any_map::Kind::Keys) } else if resolved == model::Profile::AnyMap { Some(any_map::Kind::AnyMap) } else { None };
-        let want = match (&game, &pad, kind) {
-            (Some(Game { pid, target: Target::Window { display, niri_window, niri_socket, .. }, .. }), Some(_), Some(kind)) => {
-                Some((any_map::Window { display: display.clone(), niri_socket: niri_socket.clone(), niri_window: *niri_window }, *pid, kind))
-            }
-            _ => None,
-        };
+        let want = output_target(game.as_ref(), pad.as_ref(), kind);
         if any_map_running.as_ref().map(|(window, pid, kind, ..)| (window.clone(), *pid, *kind)) != want {
             if let Some((_, _, kind, stop, _)) = any_map_running.take() {
                 stop.store(true, Ordering::Relaxed);
@@ -801,6 +850,83 @@ mod tests {
     }
     fn session(key: &str) -> Session {
         Session { key: key.into(), summary: key.into(), shown: None }
+    }
+
+    #[test]
+    fn brief_disappearance_keeps_output_and_held_keys_through_reconnection() {
+        #[derive(Default)]
+        struct Recorded(Vec<(String, bool)>);
+        impl any_map::Output for Recorded {
+            fn key(&mut self, key: &str, down: bool) -> Result<(), String> { self.0.push((key.into(), down)); Ok(()) }
+            fn click(&mut self, _: bool, _: bool) -> Result<(), String> { Ok(()) }
+            fn pointer(&mut self, _: f64, _: f64) -> Result<(), String> { Ok(()) }
+        }
+        let now = Instant::now();
+        let mut discovery = PadDiscovery::default();
+        let connected = discovery.update(Some(pad()), now);
+        let game = game(1, 5);
+        let target = output_target(Some(&game), connected.as_ref(), Some(any_map::Kind::Keys));
+        let mut driver = any_map::Driver::keys(model::PadPreset::Standard);
+        let mut out = Recorded::default();
+        let mut view = model::InputView::default();
+        driver.step(&view, true, 0.0, &mut out).unwrap();
+        view.press(model::Button::A, true);
+        driver.step(&view, true, 0.0, &mut out).unwrap();
+        assert_eq!(out.0.len(), 1);
+        assert!(out.0[0].1);
+        for milliseconds in [100, 500, 1900] {
+            let retained = discovery.update(None, now + Duration::from_millis(milliseconds));
+            assert_eq!(output_target(Some(&game), retained.as_ref(), Some(any_map::Kind::Keys)), target);
+            driver.step(&view, true, 0.0, &mut out).unwrap();
+        }
+        let mut reconnected = pad();
+        reconnected.device = "/dev/input/event8".into();
+        let retained = discovery.update(Some(reconnected), now + Duration::from_millis(1950));
+        assert_eq!(output_target(Some(&game), retained.as_ref(), Some(any_map::Kind::Keys)), target);
+        driver.step(&view, true, 0.0, &mut out).unwrap();
+        assert_eq!(out.0.len(), 1, "rediscovery must send no release or second press");
+        assert!(discovery.update(None, now + Duration::from_secs(3)).is_some());
+        assert!(discovery.update(None, now + Duration::from_secs(5)).is_none());
+        driver.release(&mut out).unwrap();
+        assert_eq!(out.0.len(), 2);
+        assert!(!out.0[1].1);
+    }
+
+    #[test]
+    fn bluetooth_event_without_by_id_is_found_and_reopened_with_held_buttons() {
+        use evdev::{AbsInfo, AbsoluteAxisCode as Abs, AttributeSet, BusType, InputId, InputEvent, KeyCode, UinputAbsSetup, uinput::VirtualDevice};
+        if fs::OpenOptions::new().write(true).open("/dev/uinput").is_err() {
+            eprintln!("skipped: /dev/uinput is not writable, so no virtual Bluetooth pad");
+            return;
+        }
+        let mut keys = AttributeSet::<KeyCode>::new();
+        keys.insert(KeyCode::BTN_SOUTH);
+        let mut virtual_pad = VirtualDevice::builder().unwrap().name("Xbox Bluetooth service test")
+            .input_id(InputId::new(BusType::BUS_BLUETOOTH, 0x045e, 0x0b13, 1))
+            .with_keys(&keys).unwrap()
+            .with_absolute_axis(&UinputAbsSetup::new(Abs::ABS_X, AbsInfo::new(0, -32768, 32767, 0, 0, 0))).unwrap()
+            .with_absolute_axis(&UinputAbsSetup::new(Abs::ABS_Y, AbsInfo::new(0, -32768, 32767, 0, 0, 0))).unwrap()
+            .build().unwrap();
+        let node = virtual_pad.enumerate_dev_nodes_blocking().unwrap().find_map(Result::ok).unwrap();
+        let dir = std::env::temp_dir().join(format!("service-bluetooth-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        std::os::unix::fs::symlink(&node, dir.join("event9")).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let found = loop {
+            if let Some(pad) = find_pad(&dir.join("by-id")) { break pad; }
+            assert!(Instant::now() < deadline, "Bluetooth event node was not discovered");
+            thread::sleep(Duration::from_millis(10));
+        };
+        assert_eq!(found.device, node);
+        assert_eq!(found.name, "Xbox Bluetooth service test");
+        virtual_pad.emit(&[InputEvent::new(1, KeyCode::BTN_SOUTH.0, 1)]).unwrap();
+        let (send, receive) = mpsc::channel();
+        let watching = thread::spawn(move || interface::watch_pad(&found.device, |view| { let _ = send.send(*view); }));
+        let held = receive.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(held.pressed(model::Button::A), "reopening must report the held button, not neutral");
+        drop(virtual_pad);
+        assert!(watching.join().unwrap().is_err());
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
