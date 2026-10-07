@@ -96,8 +96,8 @@ impl Driver {
 
     /// Smashcraft on keys. Focus loss releases every key, and nothing presses
     /// again until the pad returns to neutral while focused.
-    pub fn keys() -> Self {
-        Self { mapper: Mapper::new(Vec::new()), focused: false, menu: None, keys: Some(crate::Mapper::default()) }
+    pub fn keys(preset: model::PadPreset) -> Self {
+        Self { mapper: Mapper::new(Vec::new()), focused: false, menu: None, keys: Some(crate::Mapper::new(preset)) }
     }
 
     fn deliver_keys(transitions: Vec<crate::Transition>, out: &mut dyn Output) -> Result<(), String> {
@@ -270,7 +270,7 @@ pub enum Mode {
     /// Smashcraft played on keys: the controller-as-keys mapper of
     /// `wc3-controller --emit` ([`crate::Mapper`]), whose keys are the map's
     /// standard key layout (README, "Xbox mapping").
-    Keys,
+    Keys(model::PadPreset),
 }
 
 /// Which output runs, for the service to compare and log.
@@ -347,7 +347,7 @@ pub fn spawn(window: Window, mode: Mode, feed: mpsc::Receiver<Feed>, stop: Arc<A
                 let height = niri_window_height(&window.niri_socket, window.niri_window).unwrap_or(1440.0);
                 Driver::menu(MenuCurve::for_window_height(height))
             }
-            Mode::Keys => Driver::keys(),
+            Mode::Keys(preset) => Driver::keys(preset),
         };
         let mut input = InputView::default();
         let (mut checked, mut is_focused) = (Instant::now() - FOCUS_EVERY, false);
@@ -429,7 +429,7 @@ mod tests {
 
     #[test]
     fn smashcraft_on_keys_presses_the_maps_standard_layout() {
-        let (mut driver, mut out) = (Driver::keys(), Recorded::default());
+        let (mut driver, mut out) = (Driver::keys(model::PadPreset::Standard), Recorded::default());
         let mut pad = InputView::default();
         // Arms on a neutral pad.
         driver.step(&pad, true, 0.0, &mut out).unwrap();
@@ -446,7 +446,7 @@ mod tests {
         driver.step(&pad, true, 0.0, &mut out).unwrap();
         let mut pressed = take(&mut out);
         pressed.sort();
-        assert_eq!(pressed, ["down j", "down q", "down w"]);
+        assert_eq!(pressed, ["down 9", "down j", "down w"]);
         // Focus loss releases them; back in focus nothing presses until the pad is neutral.
         driver.step(&pad, false, 0.0, &mut out).unwrap();
         assert_eq!(take(&mut out).len(), 3);
@@ -460,7 +460,7 @@ mod tests {
             .filter_map(|binding| match binding.press { Press::Key(key) => Some(key), _ => None })
             .collect();
         let pressed: std::collections::BTreeSet<String> = [
-            crate::Action::Attack, crate::Action::Special, crate::Action::Jump, crate::Action::Grab, crate::Action::Shield, crate::Action::Walk,
+            crate::Action::Attack, crate::Action::Special, crate::Action::Jump, crate::Action::Grab, crate::Action::Shield, crate::Action::LightShield, crate::Action::Walk,
             crate::Action::Start, crate::Action::Left, crate::Action::Right, crate::Action::Down, crate::Action::Up,
             crate::Action::CLeft, crate::Action::CRight, crate::Action::CUp, crate::Action::CDown,
         ].into_iter().map(|action| match action.key() { ' ' => "space".to_owned(), key => key.to_string() }).collect();

@@ -30,6 +30,7 @@ use wc3_controller::{
 
 #[derive(Default)]
 struct Options {
+    preset: wc3_controller::model::PadPreset,
     seconds: Option<u64>,
     gamepad: Option<u32>,
     emit: bool,
@@ -43,14 +44,14 @@ struct Options {
 }
 
 #[cfg(target_os = "linux")]
-const HELP: &str = "wc3-controller [--list] [--watch-seconds N] [--gamepad ID]\n\
+const HELP: &str = "wc3-controller [--list] [--watch-seconds N] [--gamepad ID] [--preset standard|z-jump]\n\
                     Observation only by default. Live output additionally requires:\n\
                     --emit --display DISPLAY --x11-window DECIMAL_ID --pid PID --niri-window ID\n\
                     Or --private-wlr-app-id ID in the isolated labwc test desktop instead of --niri-window.\n\
                     --check-focus checks selected target without opening keyboard output. Windows/macOS refuse live output.";
 
 #[cfg(not(target_os = "linux"))]
-const HELP: &str = "wc3-controller [--list] [--watch-seconds N] [--gamepad ID]\n\
+const HELP: &str = "wc3-controller [--list] [--watch-seconds N] [--gamepad ID] [--preset standard|z-jump]\n\
                     Observation only by default. --emit sends keys only while Warcraft III is the\n\
                     foreground application; add --pid PID to require one game process.\n\
                     --check-focus checks the foreground game without opening keyboard output.\n\
@@ -200,6 +201,7 @@ fn options() -> Result<Options, String> {
                 std::process::exit(0);
             }
             "--list" => {}
+            "--preset" => o.preset = wc3_controller::model::PadPreset::parse(&args.next().ok_or("missing pad preset")?)?,
             "--emit" => o.emit = true,
             "--check-focus" => o.check_focus = true,
             "--virtual-pad" => o.virtual_pad = true,
@@ -418,7 +420,7 @@ fn run() -> Result<(), String> {
     println!(
         "# capture_ns is SDL's event timestamp since SDL initialization; dequeue_ns and submit_ns are process-monotonic since watch start"
     );
-    let mut mapper = EventMapper::default();
+    let mut mapper = EventMapper::new(o.preset);
     let mut next_id = 0;
     let startup_events = events.poll_iter().count();
     let initial = sample(&pad);

@@ -61,6 +61,7 @@ mod linux {
 
     #[derive(Default, Clone, Copy, Debug, PartialEq, Eq)]
     struct State {
+        preset: wc3_controller::model::PadPreset,
         sources: u32,
         x: i16,
         y: i16,
@@ -86,6 +87,7 @@ mod linux {
     }
 
     struct Options {
+        preset: wc3_controller::model::PadPreset,
         device: PathBuf,
         out: PathBuf,
         build: String,
@@ -850,7 +852,7 @@ mod linux {
     fn usage() -> &'static str {
         "wc3-journal --service [--display :0] [--pads /dev/input/by-id] [--status FILE] [--interface 127.0.0.1:47631|off] [--headless DOCUMENTS]\n\
          Always on: finds Warcraft III on the display, the controller and the map's session, and keeps a helper serving them.\n\
-         wc3-journal --follow-matches --build BUILD --slot N [--epoch N] [--menu-keys all|start] --device /dev/input/eventN --out DIR --editbox-display :N [--trace]\n\
+         wc3-journal --follow-matches --build BUILD --slot N [--epoch N] [--menu-keys all|start] [--preset standard|z-jump] --device /dev/input/eventN --out DIR --editbox-display :N [--trace]\n\
          Start in character selection; stick left/right chooses, A selects, X backs, Start confirms. Follows matches and rematches.\n\
          Diagnostic only: wc3-journal --device /dev/input/eventN --out DIR --ready-file PATH --epoch-monotonic-ns NS [--mailbox-display :N | --editbox-display :N] [--first-frame N] [--stop-frame N] [--trace]\n\
          Keyboard output also requires --x11-window DECIMAL_ID --pid PID and exactly one of --niri-window ID / --private-wlr-app-id ID.\n\
@@ -1044,6 +1046,7 @@ mod linux {
             return Err("--build must be 1..80 ASCII letters, digits, '-' or '_'".into());
         }
         Ok(Options {
+            preset: wc3_controller::model::PadPreset::parse(values.get("--preset").cloned().or_else(|| env::var("WC3_PAD_PRESET").ok()).as_deref().unwrap_or("standard"))?,
             device: take("--device")?.into(),
             out: take("--out")?.into(),
             build,
@@ -2046,7 +2049,8 @@ mod linux {
         if s.sources & (1 << 0) != 0 {
             held |= ATTACK;
         }
-        if s.sources & (1 << 1) != 0 || s.sources & (1 << 3) != 0 {
+        let z_jump = s.preset == wc3_controller::model::PadPreset::ZJump;
+        if s.sources & (1 << if z_jump { 5 } else { 1 }) != 0 || s.sources & (1 << 3) != 0 {
             held |= JUMP;
         }
         if s.sources & (1 << 2) != 0 {
@@ -2055,7 +2059,7 @@ mod linux {
         if s.sources & (1 << 4) != 0 {
             held |= WALK;
         }
-        if s.sources & (1 << 5) != 0 {
+        if s.sources & (1 << if z_jump { 1 } else { 5 }) != 0 {
             held |= GRAB;
         }
         let (x, y) = melee_stick(s.x, s.y);
@@ -2097,6 +2101,26 @@ mod linux {
         (i32::from(raw) * 127 / 32_767).clamp(-127, 127) as i16
     }
 
+    #[test]
+    fn journal_presets_map_jump_grab_and_digital_shield_pressure() {
+        use wc3_controller::model::PadPreset;
+        for (preset, b, rb) in [(PadPreset::Standard, JUMP, GRAB), (PadPreset::ZJump, GRAB, JUMP)] {
+            let state = State { preset, ..State::default() };
+            assert_eq!(action_state(State { sources: 1 << 1, ..state }), b);
+            assert_eq!(action_state(State { sources: 1 << 5, ..state }), rb);
+            assert_eq!(action_state(State { sources: 1 << 3, ..state }), JUMP);
+            for (lt, rt, held, pressure) in [(20_000, 0, LEFT_TRIGGER, 77 * 256), (0, 20_000, RIGHT_TRIGGER, 255), (20_000, 20_000, LEFT_TRIGGER | RIGHT_TRIGGER, 77 * 256 + 255)] {
+                assert_eq!(encode_row(State { lt, rt, ..state }, 0, Edges::default()), format!("B{}{}000{}", compact(held, 3), compact(held, 3), compact(pressure, 3)));
+            }
+            let mut held = State { sources: 1 << 5, ..state };
+            let mut edges = BTreeMap::new();
+            let mut snapshots = BTreeMap::new();
+            release_for_focus_loss(&mut held, &mut edges, &mut snapshots, 1, FrameSegment { epoch_ns: 0, first_frame: 1 }, 0).unwrap();
+            assert_eq!(held.preset, preset);
+            assert_eq!(action_state(State { sources: 1 << 5, ..held }), rb);
+        }
+    }
+
     fn encode_row(state: State, previous: u32, edges: Edges) -> String {
         let held = action_state(state);
         let pressed = edges.pressed | (held & !previous);
@@ -2120,8 +2144,8 @@ mod linux {
             flags |= 4;
             body.push_str(&compact(axes, 3));
         }
-        let lt = u32::from(state.lt.min(32_767)) * 255 / 32_767;
-        let rt = u32::from(state.rt.min(32_767)) * 255 / 32_767;
+        let lt = if state.lt > 4_000 { 77 } else { 0 };
+        let rt = if state.rt > 4_000 { 255 } else { 0 };
         let triggers = lt * 256 + rt;
         if triggers != 0 {
             flags |= 8;
@@ -2800,7 +2824,7 @@ mod linux {
         let mut sender = MailboxSender::new(&env::temp_dir(), "join", 3, 0, false, true, Typist::file(&path).unwrap()).unwrap();
         // Sticks and triggers off center: the longest rows, so 16 packets would be far over TYPED_AHEAD_BYTES.
         let dense = |first: u32| {
-            let state = State { sources: 1, x: -12_345, y: 23_456, cx: 3_456, cy: -4_567, lt: 30_000, rt: 1_000 };
+            let state = State { sources: 1, x: -12_345, y: 23_456, cx: 3_456, cy: -4_567, lt: 30_000, rt: 1_000, ..State::default() };
             let row = encode_row(state, 0, Edges::default());
             encode_packet(3, first, &[row.clone(), row])
         };
@@ -3187,7 +3211,7 @@ mod linux {
             return Err("focus release exceeds supported frame range".into());
         }
         edges.entry(frame).or_default().released |= action_state(*state);
-        *state = State::default();
+        *state = State { preset: state.preset, ..State::default() };
         snapshots.insert(frame, *state);
         Ok(frame)
     }
@@ -3904,9 +3928,10 @@ mod linux {
         if let Some(path) = &o.ready_file {
             eprintln!("readiness_receipt={}", path.display());
         }
-        let (mut axes, physical, mut start_held) = device_snapshot(&device).map_err(|e| e.to_string())?;
+        let (mut axes, mut physical, mut start_held) = device_snapshot(&device).map_err(|e| e.to_string())?;
+        physical.preset = o.preset;
         let mut capture_axes = axes;
-        let mut state = State::default();
+        let mut state = State { preset: o.preset, ..State::default() };
         let identity = DeviceIdentity::of(&device);
         let labels = FaceLabels::of(device.input_id());
         let can_reconnect = identity.reconnectable()
@@ -3978,7 +4003,7 @@ mod linux {
                     stop_capture = false;
                     ended = false;
                     end_marker_sent = false;
-                    state = State::default();
+                    state = State { preset: o.preset, ..State::default() };
                     row_state = state;
                     previous = 0;
                     edges.clear();
@@ -4057,7 +4082,8 @@ mod linux {
                         Ok(Some((replacement, snapshot)))
                     })();
                     match restored {
-                        Ok(Some((replacement, (ranges, physical, start)))) => {
+                        Ok(Some((replacement, (ranges, mut physical, start)))) => {
+                            physical.preset = o.preset;
                             let ns = monotonic_ns().map_err(|e| e.to_string())?;
                             capture_axes = ranges;
                             start_held = start;
@@ -4087,9 +4113,9 @@ mod linux {
                     device = None;
                     recovery.ready = false;
                     start_held = false;
-                    menu_input.observe(None, State::default(), false, ns);
+                    menu_input.observe(None, State { preset: o.preset, ..State::default() }, false, ns);
                     if waiting_ready {
-                        focus_input.restore(State::default(), false, ns, false);
+                        focus_input.restore(State { preset: o.preset, ..State::default() }, false, ns, false);
                         focus_input.armed = false;
                     } else {
                         pending_input.push_capture(Capture::Disconnected(ns))?;
@@ -4218,8 +4244,8 @@ mod linux {
                         epoch_ns: now,
                         first_frame: next_frame,
                     };
-                    state = State::default();
-                    row_state = State::default();
+                    state = State { preset: o.preset, ..State::default() };
+                    row_state = State { preset: o.preset, ..State::default() };
                     previous = 0;
                     edges.clear();
                     snapshots.clear();
@@ -4242,8 +4268,8 @@ mod linux {
                         epoch_ns: publication.epoch_ns,
                         first_frame: next_frame,
                     };
-                    state = State::default();
-                    row_state = State::default();
+                    state = State { preset: o.preset, ..State::default() };
+                    row_state = State { preset: o.preset, ..State::default() };
                     previous = 0;
                     edges.clear();
                     snapshots.clear();
@@ -4294,7 +4320,7 @@ mod linux {
                             );
                             eprintln!("controller_release mono_ns={ns} frame={frame}");
                         }
-                        focus_input.restore(State::default(), false, ns, false);
+                        focus_input.restore(State { preset: o.preset, ..State::default() }, false, ns, false);
                         focus_input.armed = false;
                         continue;
                     }

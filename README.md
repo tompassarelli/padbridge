@@ -65,12 +65,18 @@ intended simulation frame.
 | --- | --- |
 | A / X | Attack N / special U |
 | B or Y | Jump I |
-| RB / LB | Grab O / walk P |
-| LT or RT | Shield Q |
+| RB / LB | Grab O / Tilt P |
+| LT / RT | Light shield 9 / full shield Q |
 | Start | Y |
 | Left stick left / right / down | W / R / E |
 | Left stick up | Space (up only; no tap jump) |
 | Right stick up / right / down / left | J / M / H / B |
+
+The standard pad preset keeps B and Y as jump and RB as grab. Select **Z-jump**
+on the Controller page to make RB and Y jump and B grab; the other controls stay
+the same. Both `wc3-controller` and `wc3-journal` accept `--preset standard|z-jump`.
+The journal also accepts `WC3_PAD_PRESET`. LT requests trigger pressure 77,
+the lightest active shield, while RT requests 255 for full shield.
 
 In the map's fighter, stage and results menus, the controller service makes
 the left stick a pointer, as the hand cursor is in Smash: it moves the desktop

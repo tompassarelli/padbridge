@@ -483,6 +483,7 @@ pub fn run(config: &Config, profile: &mut dyn Profile, stop: &AtomicBool, mut re
         eprintln!("service: windows connect to {}", interface.address);
     }
     let mut choice = model::ProfileChoice::Auto;
+    let mut pad_preset = model::PadPreset::Standard;
     let mut bindings = any_map::default_bindings();
     // The running Any map output's feed; the pad watcher sends every state to it.
     let feed: Arc<Mutex<Option<mpsc::Sender<any_map::Feed>>>> = Arc::new(Mutex::new(None));
@@ -579,6 +580,18 @@ pub fn run(config: &Config, profile: &mut dyn Profile, stop: &AtomicBool, mut re
         if let Some(interface) = &interface {
             for message in interface.commands() {
                 match message {
+                    model::ClientMessage::PadPreset(preset) => {
+                        if preset != pad_preset {
+                            pad_preset = preset;
+                            if let Some(current) = running.take() { stop_child(current); }
+                            status.helper = None;
+                            supervisor = Supervisor::default();
+                            if any_map_running.as_ref().is_some_and(|(_, _, kind, ..)| *kind == any_map::Kind::Keys) {
+                                if let Some((_, _, _, stop, _)) = any_map_running.take() { stop.store(true, Ordering::Relaxed); }
+                                *feed.lock().unwrap() = None;
+                            }
+                        }
+                    }
                     model::ClientMessage::Profile(chosen) => {
                         eprintln!("service: profile chosen: {chosen:?}");
                         choice = chosen;
@@ -655,7 +668,7 @@ pub fn run(config: &Config, profile: &mut dyn Profile, stop: &AtomicBool, mut re
                 let (stop, focused) = (Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false)));
                 let mode = match kind {
                     any_map::Kind::Menu => any_map::Mode::Menu,
-                    any_map::Kind::Keys => any_map::Mode::Keys,
+                    any_map::Kind::Keys => any_map::Mode::Keys(pad_preset),
                     any_map::Kind::AnyMap => any_map::Mode::AnyMap(bindings.clone()),
                 };
                 any_map::spawn(window.clone(), mode, receive, Arc::clone(&stop), Arc::clone(&focused));
@@ -684,6 +697,7 @@ pub fn run(config: &Config, profile: &mut dyn Profile, stop: &AtomicBool, mut re
                 let args = profile.args(game, pad, session);
                 let mut command = Command::new(&config.helper);
                 command.args(&args).stdin(Stdio::null()).stderr(Stdio::piped());
+                command.args(["--preset", pad_preset.name()]);
                 command.env("WC3_SERVICE_PID", std::process::id().to_string());
                 if let Target::Window { niri_socket, display, .. } = &game.target {
                     command.env("NIRI_SOCKET", niri_socket).env("DISPLAY", display);
