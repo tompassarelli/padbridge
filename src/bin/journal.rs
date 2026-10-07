@@ -4162,7 +4162,7 @@ mod linux {
                     validate_lifecycle(&start.command, &o, ControlState::Started)?;
                     segment = FrameSegment { epoch_ns: start.epoch_ns, first_frame: next_frame };
                     waiting_start = false;
-                    eprintln!("match_start epoch={} epoch_ns={} read_ns={} uncertainty_ns={}", o.epoch, start.epoch_ns, start.read_ns, start.uncertainty_ns);
+                    eprintln!("match_start epoch={} epoch_ns={} first_frame={} read_ns={} uncertainty_ns={}", o.epoch, start.epoch_ns, segment.first_frame, start.read_ns, start.uncertainty_ns);
                 }
             }
             if !waiting_ready && !ended {
