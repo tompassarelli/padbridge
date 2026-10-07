@@ -74,6 +74,11 @@ impl VirtualPointer {
         self.flush()
     }
 
+    pub fn absolute(&mut self, x: f64, y: f64, width: u32, height: u32) -> Result<(), String> {
+        self.pointer.motion_absolute(self.time(), x.round() as u32, y.round() as u32, width, height);
+        self.flush()
+    }
+
     pub fn button(&mut self, right: bool, down: bool) -> Result<(), String> {
         use wayland_client::protocol::wl_pointer::ButtonState;
         self.pointer.button(self.time(), if right { BTN_RIGHT } else { BTN_LEFT }, if down { ButtonState::Pressed } else { ButtonState::Released });

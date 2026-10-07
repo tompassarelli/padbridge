@@ -539,3 +539,46 @@ without SDL, so windows such as smashcraft:client depend on it alone.
 smashcraft:companion is a self-contained Cargo workspace (`cargo test --workspace`)
 so it can move to its own repository; consumers then switch their path
 dependency on `wc3-controller-model` to a git one.
+
+
+## Analog comparison candidates (#204)
+
+The production default stays digital until the native comparison chooses a
+channel. The Linux service can opt into either candidate with
+`WC3_PAD_INGRESS=keys` or `WC3_PAD_INGRESS=cursor`; cursor also needs
+`WC3_PAD_CURSOR_GRID=X,Y,W,H,SCREEN_W,SCREEN_H`. The numbers are a rectangle and
+compositor output extent in logical pixels. Use the same output containing the
+game window and choose a rectangle inside its flat-ground diagnostic view.
+Restart the service after changing these variables.
+
+For a bounded native test, `wc3-controller --emit --watch-seconds N` accepts
+`--pad-ingress keys|cursor` and `--cursor-grid X,Y,W,H,SCREEN_W,SCREEN_H`, with the
+usual exact game-window and foreground arguments. Add `--virtual-pad` to feed
+SDL acquisition from stdin, for example `axis leftx 16384`, `axis leftx 32767`,
+`axis lefttrigger -7068` (SDL normalizes trigger joystick units to 0..32767),
+`button a 1`, `button a 0`, and `quit`. Keep stdin open between commands. A
+physical pad uses the same SDL capture path; the service uses evdev InputView.
+
+Both candidates first apply `melee_stick` radial clamp/deadzone and then use
+17 signed stick levels and four trigger levels from `model::pad`. The 14-bit
+payload packs X index in bits 0..4, Z index in 5..9, LT in 10..11 and RT in
+12..13. Key output holds F13..F24, Insert and Delete for those bits. Home stays held while the pad
+is armed and focused; End marks a complete payload. Payload changes release End, change the bits, then press
+End. Cursor output sends low seven bits as the horizontal cell and high seven
+bits as the vertical cell across a 128 by 128 grid, with Home and End active.
+The map keeps the previous complete payload while Home is held and End is
+released during a write, and clears it when Home is released. Existing
+action keys are still emitted. Focus loss and disconnect release the carrier;
+controls must return to neutral before it becomes active again. Experimental
+output logs each submitted `pad_ingress payload=... x=... z=... left=... right=...`
+record to stderr alongside the ordinary timestamped action history on stdout.
+
+Cursor calibration is a separate bounded operation, requiring no controller:
+run `wc3-controller --emit --watch-seconds N --cursor-calibrate start` with
+`--cursor-grid` and the usual foreground arguments after the diagnostic map's
+camera is fixed. It holds Home, End and PageUp and moves to cell (0,0). Wait for the
+map's calibration observation, then allow the helper to exit. Repeat with
+`--cursor-calibrate end` for PageDown and cell (127,127). Each operation releases
+its markers when it exits or loses focus. The native runner must observe both
+calibration callbacks before starting cursor playback; the duration alone is
+not a calibration acknowledgment.
