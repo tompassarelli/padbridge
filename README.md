@@ -286,6 +286,16 @@ of the pad's state (read without grabbing it), and from the window
 `auto` (the default) runs Smashcraft while this game has published a
 Smashcraft menu since it started, and Any map otherwise.
 
+A build that reads Warcraft's own key events (the playable build, #166)
+publishes no menu: its ready file `CustomMapData/wc3-melee-ready.txt` names
+the build and `INPUT callback`. Newer than the game's start and than any menu,
+it is a Smashcraft session on keys (`session=BUILD/keys/N`): the service
+runs no helper and presses the pad's keys itself through the same mapper as
+`--emit` (the table above: A n, X u, B/Y i, RB o, LB p, either trigger q,
+Start y, left stick w/r/e/space, right stick b/m/j/h), into the game's window
+while niri focuses it. Focus loss releases them, and nothing presses again
+until the pad is neutral. The status reads `state=serving` once that output runs.
+
 The Any map profile (smashcraft:companion/src/service/any_map.rs) plays any
 map, melee included: `model::any_map_bindings()` puts the camera arrows on the
 left stick, the pointer on the right stick, left and right click on A and B,
