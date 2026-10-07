@@ -51,6 +51,7 @@ pub enum Action {
     Jump,
     Grab,
     Shield,
+    LightShield,
     Walk,
     Start,
     Left,
@@ -71,6 +72,7 @@ impl Action {
             Self::Jump => 'i',
             Self::Grab => 'o',
             Self::Shield => 'q',
+            Self::LightShield => '9',
             Self::Walk => 'p',
             Self::Start => 'y',
             Self::Left => 'w',
@@ -156,6 +158,9 @@ pub struct EventMapper {
 }
 
 impl EventMapper {
+    pub fn new(preset: model::PadPreset) -> Self {
+        Self { mapper: Mapper::new(preset), ..Self::default() }
+    }
     /// Establish a fresh baseline without emitting presses. This is used after
     /// startup, focus loss, disconnect, or remapping; callers should pass the
     /// current SDL state and accept input only after the mapper arms neutrally.
@@ -214,9 +219,13 @@ impl EventMapper {
 pub struct Mapper {
     held: BTreeSet<Action>,
     armed: bool,
+    preset: model::PadPreset,
 }
 
 impl Mapper {
+    pub fn new(preset: model::PadPreset) -> Self {
+        Self { preset, ..Self::default() }
+    }
     pub fn armed(&self) -> bool {
         self.armed
     }
@@ -237,12 +246,13 @@ impl Mapper {
         let bindings = [
             (Action::Attack, sample.a),
             (Action::Special, sample.x),
-            (Action::Jump, sample.b || sample.y),
-            (Action::Grab, sample.rb),
+            (Action::Jump, sample.y || if self.preset == model::PadPreset::ZJump { sample.rb } else { sample.b }),
+            (Action::Grab, if self.preset == model::PadPreset::ZJump { sample.b } else { sample.rb }),
             (
                 Action::Shield,
-                sample.left_trigger > TRIGGER_THRESHOLD || sample.right_trigger > TRIGGER_THRESHOLD,
+                sample.right_trigger > TRIGGER_THRESHOLD,
             ),
+            (Action::LightShield, sample.left_trigger > TRIGGER_THRESHOLD),
             (Action::Walk, sample.lb),
             (Action::Start, sample.start),
             (Action::Left, left_x < 0),
@@ -297,17 +307,33 @@ mod tests {
     }
 
     #[test]
-    fn triggers_share_shield_until_last_release() {
+    fn z_jump_uses_rb_and_y_for_jump_and_b_for_grab() {
+        let mut map = Mapper::new(model::PadPreset::ZJump);
+        tick(&mut map, &Sample::default());
+        let mut sample = Sample { rb: true, ..Sample::default() };
+        assert_eq!(tick(&mut map, &sample), vec![edge(Action::Jump, true)]);
+        sample.y = true;
+        assert!(tick(&mut map, &sample).is_empty());
+        sample.rb = false;
+        assert!(tick(&mut map, &sample).is_empty());
+        sample.b = true;
+        assert_eq!(tick(&mut map, &sample), vec![edge(Action::Grab, true)]);
+        sample.y = false;
+        assert_eq!(tick(&mut map, &sample), vec![edge(Action::Jump, false)]);
+    }
+
+    #[test]
+    fn light_and_full_shield_hold_independently() {
         let mut map = armed();
         let mut s = Sample {
             left_trigger: 20000,
             ..Sample::default()
         };
-        assert_eq!(tick(&mut map, &s), vec![edge(Action::Shield, true)]);
+        assert_eq!(tick(&mut map, &s), vec![edge(Action::LightShield, true)]);
         s.right_trigger = 30000;
-        assert!(tick(&mut map, &s).is_empty());
+        assert_eq!(tick(&mut map, &s), vec![edge(Action::Shield, true)]);
         s.left_trigger = 0;
-        assert!(tick(&mut map, &s).is_empty());
+        assert_eq!(tick(&mut map, &s), vec![edge(Action::LightShield, false)]);
         s.right_trigger = 0;
         assert_eq!(tick(&mut map, &s), vec![edge(Action::Shield, false)]);
     }
@@ -417,7 +443,7 @@ mod tests {
             tick(&mut map, &held);
             assert_eq!(
                 map.update(if disconnect { None } else { Some(&held) }, disconnect),
-                vec![edge(Action::Attack, false), edge(Action::Shield, false)]
+                vec![edge(Action::Attack, false), edge(Action::LightShield, false)]
             );
             assert!(!map.armed());
             assert!(tick(&mut map, &held).is_empty());
@@ -426,7 +452,7 @@ mod tests {
             assert!(map.armed());
             assert_eq!(
                 tick(&mut map, &held),
-                vec![edge(Action::Attack, true), edge(Action::Shield, true)]
+                vec![edge(Action::Attack, true), edge(Action::LightShield, true)]
             );
         }
     }
@@ -568,10 +594,10 @@ mod tests {
         );
         assert_eq!(
             capture(&mut mapper, &axis(5, 1, Axis::TriggerLeft, 20_000), 1),
-            vec![edge(Action::Shield, true)]
+            vec![edge(Action::LightShield, true)]
         );
-        assert!(capture(&mut mapper, &axis(6, 1, Axis::TriggerRight, 20_000), 1).is_empty());
-        assert!(capture(&mut mapper, &axis(7, 1, Axis::TriggerLeft, 0), 1).is_empty());
+        assert_eq!(capture(&mut mapper, &axis(6, 1, Axis::TriggerRight, 20_000), 1), vec![edge(Action::Shield, true)]);
+        assert_eq!(capture(&mut mapper, &axis(7, 1, Axis::TriggerLeft, 0), 1), vec![edge(Action::LightShield, false)]);
         assert_eq!(
             capture(&mut mapper, &axis(8, 1, Axis::TriggerRight, 0), 1),
             vec![edge(Action::Shield, false)]
