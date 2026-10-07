@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 pub mod output;
+pub mod pad_ingress;
 pub mod stick;
 #[cfg(target_os = "linux")]
 pub mod service;
@@ -176,6 +177,10 @@ impl EventMapper {
 
     pub fn armed(&self) -> bool {
         self.mapper.armed()
+    }
+
+    pub fn sample(&self) -> &Sample {
+        &self.sample
     }
 
     pub fn apply(&mut self, event: CapturedInput, eligible: bool) -> Vec<Transition> {

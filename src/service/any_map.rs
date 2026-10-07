@@ -31,6 +31,15 @@ pub trait Output {
     fn click(&mut self, right: bool, down: bool) -> Result<(), String>;
     /// Relative motion in logical pixels.
     fn pointer(&mut self, dx: f64, dy: f64) -> Result<(), String>;
+    fn cursor(&mut self, _x: f64, _y: f64, _width: u32, _height: u32) -> Result<(), String> {
+        Err("output has no absolute pointer".into())
+    }
+}
+
+struct AnalogOutput<'a>(&'a mut dyn Output);
+impl crate::pad_ingress::Output for AnalogOutput<'_> {
+    fn key(&mut self, name: &str, down: bool) -> Result<(), String> { self.0.key(name, down) }
+    fn cursor(&mut self, x: f64, y: f64, width: u32, height: u32) -> Result<(), String> { self.0.cursor(x, y, width, height) }
 }
 
 /// The menu pointer's feel: a small radial deadzone, then speed rising with
@@ -82,22 +91,27 @@ pub struct Driver {
     menu: Option<MenuCurve>,
     /// Smashcraft on keys: this mapper replaces the bindings' one.
     keys: Option<crate::Mapper>,
+    analog: crate::pad_ingress::Ingress,
 }
 
 impl Driver {
     pub fn new(bindings: Vec<Binding>) -> Self {
-        Self { mapper: Mapper::new(bindings), focused: false, menu: None, keys: None }
+        Self { mapper: Mapper::new(bindings), focused: false, menu: None, keys: None, analog: crate::pad_ingress::Ingress::new(crate::pad_ingress::Route::Digital) }
     }
 
     /// The menu pointer: the left stick moves the pointer by `curve`, A and B click.
     pub fn menu(curve: MenuCurve) -> Self {
-        Self { mapper: Mapper::new(menu_bindings()), focused: false, menu: Some(curve), keys: None }
+        Self { mapper: Mapper::new(menu_bindings()), focused: false, menu: Some(curve), keys: None, analog: crate::pad_ingress::Ingress::new(crate::pad_ingress::Route::Digital) }
     }
 
     /// Smashcraft on keys. Focus loss releases every key, and nothing presses
     /// again until the pad returns to neutral while focused.
     pub fn keys(preset: model::PadPreset) -> Self {
-        Self { mapper: Mapper::new(Vec::new()), focused: false, menu: None, keys: Some(crate::Mapper::new(preset)) }
+        Self::keys_with_ingress(preset, crate::pad_ingress::Route::Digital)
+    }
+
+    pub fn keys_with_ingress(preset: model::PadPreset, route: crate::pad_ingress::Route) -> Self {
+        Self { mapper: Mapper::new(Vec::new()), focused: false, menu: None, keys: Some(crate::Mapper::new(preset)), analog: crate::pad_ingress::Ingress::new(route) }
     }
 
     fn deliver_keys(transitions: Vec<crate::Transition>, out: &mut dyn Output) -> Result<(), String> {
@@ -128,7 +142,9 @@ impl Driver {
     pub fn step(&mut self, input: &InputView, focused: bool, seconds: f32, out: &mut dyn Output) -> Result<(), String> {
         if let Some(keys) = &mut self.keys {
             self.focused = focused;
-            return Self::deliver_keys(keys.update(Some(&sample_of(input)), focused), out);
+            let sample = sample_of(input);
+            Self::deliver_keys(keys.update(Some(&sample), focused), out)?;
+            return self.analog.update(&sample, focused && keys.armed(), &mut AnalogOutput(out));
         }
         if !focused {
             if self.focused {
@@ -169,7 +185,8 @@ impl Driver {
 
     pub fn release(&mut self, out: &mut dyn Output) -> Result<(), String> {
         if let Some(keys) = &mut self.keys {
-            return Self::deliver_keys(keys.update(None, false), out);
+            Self::deliver_keys(keys.update(None, false), out)?;
+            return self.analog.release(&mut AnalogOutput(out));
         }
         Self::deliver(self.mapper.release_all(), out)
     }
@@ -211,6 +228,11 @@ pub fn key_of(name: &str) -> Option<enigo::Key> {
         "f1" => Key::F1, "f2" => Key::F2, "f3" => Key::F3, "f4" => Key::F4,
         "f5" => Key::F5, "f6" => Key::F6, "f7" => Key::F7, "f8" => Key::F8,
         "f9" => Key::F9, "f10" => Key::F10, "f11" => Key::F11, "f12" => Key::F12,
+        "f13" => Key::F13, "f14" => Key::F14, "f15" => Key::F15, "f16" => Key::F16,
+        "f17" => Key::F17, "f18" => Key::F18, "f19" => Key::F19, "f20" => Key::F20,
+        "f21" => Key::F21, "f22" => Key::F22, "f23" => Key::F23, "f24" => Key::F24,
+        "insert" => Key::Insert, "delete" => Key::Delete, "end" => Key::End, "home" => Key::Home,
+        "pageup" => Key::PageUp, "pagedown" => Key::PageDown,
         _ => return None,
     })
 }
@@ -229,6 +251,15 @@ impl Output for DesktopOutput {
     fn pointer(&mut self, dx: f64, dy: f64) -> Result<(), String> {
         self.pointer.motion(dx, dy)
     }
+
+    fn cursor(&mut self, x: f64, y: f64, width: u32, height: u32) -> Result<(), String> {
+        self.pointer.absolute(x, y, width, height)
+    }
+}
+
+impl crate::pad_ingress::Output for DesktopOutput {
+    fn key(&mut self, name: &str, down: bool) -> Result<(), String> { Output::key(self, name, down) }
+    fn cursor(&mut self, x: f64, y: f64, width: u32, height: u32) -> Result<(), String> { Output::cursor(self, x, y, width, height) }
 }
 
 /// The game window's height in logical pixels, as niri lays it out.
@@ -347,7 +378,13 @@ pub fn spawn(window: Window, mode: Mode, feed: mpsc::Receiver<Feed>, stop: Arc<A
                 let height = niri_window_height(&window.niri_socket, window.niri_window).unwrap_or(1440.0);
                 Driver::menu(MenuCurve::for_window_height(height))
             }
-            Mode::Keys(preset) => Driver::keys(preset),
+            Mode::Keys(preset) => {
+                let route = match crate::pad_ingress::Route::from_env() {
+                    Ok(route) => route,
+                    Err(error) => { eprintln!("service: {error}"); return; }
+                };
+                Driver::keys_with_ingress(preset, route)
+            },
         };
         let mut input = InputView::default();
         let (mut checked, mut is_focused) = (Instant::now() - FOCUS_EVERY, false);
@@ -452,6 +489,29 @@ mod tests {
         assert_eq!(take(&mut out).len(), 3);
         driver.step(&pad, true, 0.0, &mut out).unwrap();
         assert!(take(&mut out).is_empty());
+    }
+
+    #[test]
+    fn analog_focus_loss_releases_marker_and_payload_and_waits_for_neutral() {
+        let (mut driver, mut out) = (Driver::keys_with_ingress(model::PadPreset::Standard, crate::pad_ingress::Route::Keys), Recorded::default());
+        driver.step(&InputView::default(), true, 0.0, &mut out).unwrap();
+        let pad = InputView { left: [16384, 0], rt: 32767, ..InputView::default() };
+        driver.step(&pad, true, 0.0, &mut out).unwrap();
+        take(&mut out);
+        driver.step(&pad, false, 0.0, &mut out).unwrap();
+        let released = take(&mut out);
+        assert!(released.contains(&"up end".to_owned()));
+        assert!(released.contains(&"up home".to_owned()));
+        assert!(released.iter().all(|event| event.starts_with("up ")));
+        driver.step(&pad, true, 0.0, &mut out).unwrap();
+        assert!(take(&mut out).is_empty());
+        driver.step(&InputView::default(), true, 0.0, &mut out).unwrap();
+        assert!(take(&mut out).contains(&"down end".to_owned()));
+        driver.release(&mut out).unwrap();
+        assert!(take(&mut out).contains(&"up end".to_owned()));
+        for key in crate::model::pad::KEY_NAMES.into_iter().chain(["end", "home", "pageup", "pagedown"]) {
+            assert!(key_of(key).is_some(), "{key}");
+        }
     }
 
     #[test]

@@ -41,6 +41,9 @@ struct Options {
     wlr_app_id: Option<String>,
     check_focus: bool,
     virtual_pad: bool,
+    pad_ingress: Option<String>,
+    cursor_grid: Option<String>,
+    cursor_calibrate: Option<bool>,
 }
 
 #[cfg(target_os = "linux")]
@@ -48,6 +51,10 @@ const HELP: &str = "wc3-controller [--list] [--watch-seconds N] [--gamepad ID] [
                     Observation only by default. Live output additionally requires:\n\
                     --emit --display DISPLAY --x11-window DECIMAL_ID --pid PID --niri-window ID\n\
                     Or --private-wlr-app-id ID in the isolated labwc test desktop instead of --niri-window.\n\
+                    --pad-ingress digital|keys|cursor selects experimental analog output (requires --emit).\n\
+                    --cursor-grid X,Y,W,H,SCREEN_W,SCREEN_H selects cursor cells in logical pixels.\n\
+                    --cursor-calibrate start|end holds the corresponding corner marker until exit.\n\
+                    --virtual-pad uses stdin SDL axis/button commands instead of a physical pad.\n\
                     --check-focus checks selected target without opening keyboard output. Windows/macOS refuse live output.";
 
 #[cfg(not(target_os = "linux"))]
@@ -205,6 +212,12 @@ fn options() -> Result<Options, String> {
             "--emit" => o.emit = true,
             "--check-focus" => o.check_focus = true,
             "--virtual-pad" => o.virtual_pad = true,
+            "--pad-ingress" => o.pad_ingress = Some(args.next().ok_or("missing pad ingress")?),
+            "--cursor-grid" => o.cursor_grid = Some(args.next().ok_or("missing cursor rectangle")?),
+            "--cursor-calibrate" => o.cursor_calibrate = Some(match args.next().as_deref() {
+                Some("start") => false, Some("end") => true,
+                _ => return Err("cursor calibration must be start or end".into()),
+            }),
             "--private-wlr-app-id" => {
                 o.wlr_app_id = Some(args.next().ok_or("missing private compositor app ID")?)
             }
@@ -255,7 +268,32 @@ fn options() -> Result<Options, String> {
     if o.emit && o.seconds.is_none() {
         return Err("--emit requires a bounded --watch-seconds duration".into());
     }
+    if (o.pad_ingress.is_some() || o.cursor_calibrate.is_some()) && !o.emit {
+        return Err("analog output and calibration require --emit".into());
+    }
+    #[cfg(not(target_os = "linux"))]
+    if o.pad_ingress.is_some() || o.cursor_calibrate.is_some() {
+        return Err("candidate analog output currently runs on Linux".into());
+    }
     Ok(o)
+}
+
+#[cfg(target_os = "linux")]
+struct AnalogSession {
+    ingress: wc3_controller::pad_ingress::Ingress,
+    out: wc3_controller::service::any_map::DesktopOutput,
+}
+
+#[cfg(target_os = "linux")]
+impl AnalogSession {
+    fn step(&mut self, sample: &Sample, eligible: bool) -> Result<(), String> {
+        self.ingress.update(sample, eligible, &mut self.out)
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for AnalogSession {
+    fn drop(&mut self) { let _ = self.ingress.release(&mut self.out); }
 }
 
 fn sample(pad: &Gamepad) -> Sample {
@@ -355,6 +393,39 @@ fn run() -> Result<(), String> {
         );
         return Ok(());
     }
+    #[cfg(target_os = "linux")]
+    let route = wc3_controller::pad_ingress::Route::parse(o.pad_ingress.as_deref().unwrap_or("digital"), o.cursor_grid.as_deref())?;
+    #[cfg(target_os = "linux")]
+    if let Some(end) = o.cursor_calibrate {
+        use wc3_controller::pad_ingress::{CursorGrid, calibrate};
+        let grid = CursorGrid::parse(o.cursor_grid.as_deref().ok_or("calibration requires --cursor-grid")?)?;
+        let mut out = wc3_controller::service::any_map::DesktopOutput::new(o.display.as_deref().ok_or("missing display")?)?;
+        let start = Instant::now();
+        let mut held = false;
+        let calibrating = Arc::new(AtomicBool::new(true));
+        let signal_calibrating = Arc::clone(&calibrating);
+        ctrlc::set_handler(move || signal_calibrating.store(false, Ordering::Relaxed)).map_err(|e| e.to_string())?;
+        let result = (|| -> Result<(), String> {
+            while calibrating.load(Ordering::Relaxed) && start.elapsed() < Duration::from_secs(o.seconds.ok_or("missing duration")?) {
+                let eligible = gate.as_mut().ok_or("missing focus gate")?.eligible()?;
+                if eligible != held {
+                    calibrate(grid, end, eligible, &mut out)?;
+                    held = eligible;
+                }
+                std::thread::sleep(Duration::from_millis(4));
+            }
+            Ok(())
+        })();
+        let cleanup = calibrate(grid, end, false, &mut out);
+        return result.and(cleanup);
+    }
+    #[cfg(target_os = "linux")]
+    let mut analog = if o.emit && route != wc3_controller::pad_ingress::Route::Digital {
+        Some(AnalogSession {
+            ingress: wc3_controller::pad_ingress::Ingress::new(route),
+            out: wc3_controller::service::any_map::DesktopOutput::new(o.display.as_deref().ok_or("missing display")?)?,
+        })
+    } else { None };
     if !sdl3::hint::set("SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS", "1") {
         return Err("SDL refused background controller acquisition".into());
     }
@@ -398,6 +469,9 @@ fn run() -> Result<(), String> {
     let id = match o.gamepad {
         Some(id) if ids.contains(&JoystickId::from(id)) => JoystickId::from(id),
         Some(_) => return Err("selected gamepad is not connected".into()),
+        None if virtual_pad.is_some() => virtual_pad.as_ref()
+            .and_then(|pad| pad.attached.as_ref().map(|(_, connection)| connection.id()))
+            .ok_or("virtual pad is not connected")?,
         None if ids.len() == 1 => ids[0],
         None => {
             return Err("watch requires exactly one gamepad or an explicit --gamepad ID".into());
@@ -472,6 +546,10 @@ fn run() -> Result<(), String> {
                     keyboard.apply(transition)?;
                 }
             }
+        }
+        #[cfg(target_os = "linux")]
+        if let Some(analog) = &mut analog {
+            analog.step(mapper.sample(), eligible && mapper.armed() && pad.connected())?;
         }
         if last_eligibility != Some(eligible) {
             let reason = gate
@@ -580,6 +658,10 @@ fn run() -> Result<(), String> {
                         );
                     }
                 }
+                #[cfg(target_os = "linux")]
+                if let Some(analog) = &mut analog {
+                    analog.step(mapper.sample(), event_eligible && mapper.armed())?;
+                }
             } else if matches!(&event, Event::GamepadRemoved { which, .. } if *which == id) {
                 let event_id = next_event_id(&mut next_id);
                 let release = mapper.disarm();
@@ -613,6 +695,10 @@ fn run() -> Result<(), String> {
                     }
                 }
             }
+        }
+        #[cfg(target_os = "linux")]
+        if let Some(analog) = &mut analog {
+            analog.step(mapper.sample(), last_eligibility == Some(true) && mapper.armed() && pad.connected())?;
         }
         std::thread::sleep(Duration::from_millis(4));
     }
