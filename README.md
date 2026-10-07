@@ -286,9 +286,9 @@ of the pad's state (read without grabbing it), and from the window
 `auto` (the default) runs Smashcraft while this game has published a
 Smashcraft menu since it started, and Any map otherwise.
 
-A build that reads Warcraft's own key events (the playable build, #166)
+A build that reads keyboard input (the playable build, #166)
 publishes no menu: its ready file `CustomMapData/wc3-melee-ready.txt` names
-the build and `INPUT callback`. Newer than the game's start and than any menu,
+the build and `INPUT keyboard-d2-r24` (the development build uses `INPUT callback`). Newer than the game's start and than any menu,
 it is a Smashcraft session on keys (`session=BUILD/keys/N`): the service
 runs no helper and presses the pad's keys itself through the same mapper as
 `--emit` (the table above: A n, X u, B/Y i, RB o, LB p, either trigger q,

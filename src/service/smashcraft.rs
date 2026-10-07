@@ -8,9 +8,9 @@
 //! session (the map was opened again), which a running helper would ignore,
 //! so it gets a new session key and a fresh helper.
 //!
-//! A build that reads Warcraft's own key events (the playable build, #166)
+//! A build that reads keyboard input (the playable build, #166)
 //! publishes no menu. Its ready file `CustomMapData/wc3-melee-ready.txt`,
-//! written at fighter selection, names the build and `INPUT callback`: that
+//! written at fighter selection, names the build and its keyboard profile: that
 //! session plays on keys, so the service runs no helper and presses the
 //! controller's keys itself ([`super::any_map::Mode::Keys`]).
 
@@ -119,14 +119,14 @@ pub struct KeysSession {
     pub modified: SystemTime,
 }
 
-/// The ready file's build when it names a build on key events; None for a journal build or a partial file.
+/// The ready file's build when it names a keyboard profile; None for a journal build or a partial file.
 pub fn keys_build(contents: &str) -> Option<String> {
     if contents.lines().rev().find(|line| !line.trim().is_empty()).map(str::trim) != Some("endfunction") {
         return None;
     }
     let value = |label: &str| contents.split(&format!("\"{label} ")).nth(1)?.split('"').next().map(str::to_owned);
     let input = value("INPUT")?;
-    (input.split_whitespace().next() == Some("callback")).then_some(())?;
+    matches!(input.split_whitespace().next(), Some("callback" | "keyboard-d2-r24")).then_some(())?;
     value("BUILD").filter(|build| !build.is_empty())
 }
 
@@ -333,6 +333,7 @@ mod tests {
     #[test]
     fn a_ready_file_names_a_keyboard_build() {
         assert_eq!(keys_build(READY), Some("playable-0047".into()));
+        assert_eq!(keys_build(&READY.replace("INPUT callback", "INPUT keyboard-d2-r24")), Some("playable-0047".into()));
         // A journal build's ready file is no keyboard session; nor is a partial file.
         assert_eq!(keys_build(&READY.replace("INPUT callback", "INPUT shadow-d0-r24")), None);
         assert_eq!(keys_build(READY.trim_end_matches("endfunction\n")), None);
