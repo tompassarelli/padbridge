@@ -73,7 +73,7 @@ impl Action {
             Self::Jump => 'i',
             Self::Grab => 'o',
             Self::Shield => 'q',
-            Self::LightShield => '9',
+            Self::LightShield => 't',
             Self::Walk => 'p',
             Self::Start => 'y',
             Self::Left => 'w',
@@ -519,12 +519,13 @@ mod tests {
             left_x: -20000,
             left_y: 22000,
             right_x: 26_500,
+            left_trigger: 20_000,
             ..Sample::default()
         };
         let keys: BTreeSet<_> = tick(&mut map, &s).iter().map(|t| t.action.key()).collect();
         assert_eq!(
             keys,
-            ['n', 'u', 'o', 'p', 'y', 'w', 'e', 'm']
+            ['n', 'u', 'o', 'p', 'y', 'w', 'e', 'm', 't']
                 .into_iter()
                 .collect()
         );

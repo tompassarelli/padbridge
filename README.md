@@ -66,7 +66,7 @@ intended simulation frame.
 | A / X | Attack N / special U |
 | B or Y | Jump I |
 | RB / LB | Grab O / Tilt P |
-| LT / RT | Light shield 9 / full shield Q |
+| LT / RT | Light shield T / full shield Q |
 | Start | Y |
 | Left stick left / right / down | W / R / E |
 | Left stick up | Space (up only; no tap jump) |
