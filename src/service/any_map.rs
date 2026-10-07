@@ -301,7 +301,7 @@ pub enum Mode {
     /// Smashcraft played on keys: the controller-as-keys mapper of
     /// `wc3-controller --emit` ([`crate::Mapper`]), whose keys are the map's
     /// standard key layout (README, "Xbox mapping").
-    Keys(model::PadPreset),
+    Keys(model::PadPreset, bool),
 }
 
 /// Which output runs, for the service to compare and log.
@@ -378,12 +378,14 @@ pub fn spawn(window: Window, mode: Mode, feed: mpsc::Receiver<Feed>, stop: Arc<A
                 let height = niri_window_height(&window.niri_socket, window.niri_window).unwrap_or(1440.0);
                 Driver::menu(MenuCurve::for_window_height(height))
             }
-            Mode::Keys(preset) => {
+            Mode::Keys(preset, tap_jump) => {
                 let route = match crate::pad_ingress::Route::from_env() {
                     Ok(route) => route,
                     Err(error) => { eprintln!("service: {error}"); return; }
                 };
-                Driver::keys_with_ingress(preset, route)
+                let mut driver = Driver::keys_with_ingress(preset, route);
+                if let Some(mapper) = &mut driver.keys { mapper.set_tap_jump(tap_jump); }
+                driver
             },
         };
         let mut input = InputView::default();

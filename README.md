@@ -78,6 +78,12 @@ the same. Both `wc3-controller` and `wc3-journal` accept `--preset standard|z-ju
 The journal also accepts `WC3_PAD_PRESET`. LT requests trigger pressure 77,
 the lightest active shield, while RT requests 255 for full shield.
 
+Tap jump is off by default. The Controller page can enable it, or either helper
+accepts `--tap-jump on|off` (the journal also reads `WC3_TAP_JUMP`). When enabled,
+stick up past 0.6625 requests jump. Holding Tilt plus shield caps the effective
+stick at 0.65 before tap jump, so the shield can tilt up without jumping.
+Jump buttons keep working while tilting the shield.
+
 In the map's fighter, stage and results menus, the controller service makes
 the left stick a pointer, as the hand cursor is in Smash: it moves the desktop
 pointer over the game (the compositor's virtual pointer), A left-clicks to

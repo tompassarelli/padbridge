@@ -183,6 +183,7 @@ pub enum ServiceMessage {
 pub enum ClientMessage {
     Profile(ProfileChoice),
     PadPreset(PadPreset),
+    TapJump(bool),
     /// Replaces the Any map profile's bindings.
     Bindings(Vec<Binding>),
 }
@@ -499,6 +500,7 @@ mod tests {
         }
         assert_eq!(z_jump.iter().find(|binding| binding.control == Control::Y).unwrap().action, "Jump");
         assert_eq!(ClientMessage::PadPreset(PadPreset::ZJump).line(), "{\"pad_preset\":\"z-jump\"}\n");
+        assert_eq!(ClientMessage::TapJump(true).line(), "{\"tap_jump\":true}\n");
     }
     use super::*;
 

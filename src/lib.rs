@@ -159,6 +159,9 @@ pub struct EventMapper {
 }
 
 impl EventMapper {
+    pub fn set_tap_jump(&mut self, enabled: bool) {
+        self.mapper.set_tap_jump(enabled);
+    }
     pub fn new(preset: model::PadPreset) -> Self {
         Self { mapper: Mapper::new(preset), ..Self::default() }
     }
@@ -225,9 +228,13 @@ pub struct Mapper {
     held: BTreeSet<Action>,
     armed: bool,
     preset: model::PadPreset,
+    tap_jump: bool,
 }
 
 impl Mapper {
+    pub fn set_tap_jump(&mut self, enabled: bool) {
+        self.tap_jump = enabled;
+    }
     pub fn new(preset: model::PadPreset) -> Self {
         Self { preset, ..Self::default() }
     }
@@ -246,12 +253,13 @@ impl Mapper {
         }
         let (left_x, left_y) = stick::melee_stick(sample.left_x, sample.left_y);
         let (right_x, right_y) = stick::c_stick(sample.right_x, sample.right_y);
+        let stick_jump = stick::tap_jump(left_y, self.tap_jump, sample.lb, sample.left_trigger > TRIGGER_THRESHOLD || sample.right_trigger > TRIGGER_THRESHOLD);
         // Union source states before diffing, so releasing one source never
         // releases an action another source still owns.
         let bindings = [
             (Action::Attack, sample.a),
             (Action::Special, sample.x),
-            (Action::Jump, sample.y || if self.preset == model::PadPreset::ZJump { sample.rb } else { sample.b }),
+            (Action::Jump, stick_jump || sample.y || if self.preset == model::PadPreset::ZJump { sample.rb } else { sample.b }),
             (Action::Grab, if self.preset == model::PadPreset::ZJump { sample.b } else { sample.rb }),
             (
                 Action::Shield,
@@ -309,6 +317,31 @@ mod tests {
         let mut map = Mapper::default();
         tick(&mut map, &Sample::default());
         map
+    }
+
+    #[test]
+    fn optional_tap_jump_escapes_shield_but_tilt_caps_only_stick_jump() {
+        for preset in [model::PadPreset::Standard, model::PadPreset::ZJump] {
+            let mut mapper = Mapper::new(preset);
+            tick(&mut mapper, &Sample::default());
+            let mut sample = Sample { right_trigger: 20_000, left_y: -32_767, ..Sample::default() };
+            assert!(!tick(&mut mapper, &sample).contains(&edge(Action::Jump, true)));
+            mapper.set_tap_jump(true);
+            assert!(tick(&mut mapper, &sample).contains(&edge(Action::Jump, true)));
+            sample.lb = true;
+            assert!(tick(&mut mapper, &sample).contains(&edge(Action::Jump, false)));
+            sample.rb = preset == model::PadPreset::ZJump;
+            sample.b = preset == model::PadPreset::Standard;
+            assert!(tick(&mut mapper, &sample).contains(&edge(Action::Jump, true)));
+            sample.rb = false;
+            sample.b = false;
+            assert!(tick(&mut mapper, &sample).contains(&edge(Action::Jump, false)));
+            sample.right_trigger = 0;
+            assert!(tick(&mut mapper, &sample).contains(&edge(Action::Jump, true)));
+        }
+        assert!(!stick::tap_jump(-21_708, true, false, true));
+        assert!(stick::tap_jump(-21_709, true, false, true));
+        assert!(!stick::tap_jump(-32_767, true, true, true));
     }
 
     #[test]
