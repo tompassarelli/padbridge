@@ -1092,7 +1092,7 @@ mod linux {
     }
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    enum MenuPhase { Character, Stage, Result }
+    enum MenuPhase { Character, Cpu, Stage, Result }
 
     fn menu_phase(contents: &str, build: &str, epoch: u32, slot: u32) -> Option<MenuPhase> {
         if contents.lines().rev().find(|line| !line.trim().is_empty()).map(str::trim) != Some("endfunction") {
@@ -1102,6 +1102,7 @@ mod linux {
         let value = contents.split_once(&prefix)?.1.split_once('"')?.0;
         match value {
             "CHARACTER" => Some(MenuPhase::Character),
+            "CPU" => Some(MenuPhase::Cpu),
             "STAGE" => Some(MenuPhase::Stage),
             "RESULT" => Some(MenuPhase::Result),
             _ => None,
@@ -1133,7 +1134,9 @@ mod linux {
     }
 
     fn menu_buttons(physical: State, start: bool) -> u32 {
-        (action_state(physical) & (MOVE_LEFT | MOVE_RIGHT | ATTACK | SPECIAL)) | (u32::from(start) << 31)
+        let (_, y) = melee_stick(physical.x, physical.y);
+        let vertical = if y < 0 { MOVE_UP } else if y > 0 { MOVE_DOWN } else { 0 };
+        (action_state(physical) & (MOVE_LEFT | MOVE_RIGHT | ATTACK | SPECIAL)) | vertical | (u32::from(start) << 31)
     }
 
     #[derive(Default)]
@@ -1167,13 +1170,15 @@ mod linux {
                 return None;
             }
             let pressed = menu_buttons(after, start_after) & !menu_buttons(before, start_before);
-            if self.start_only && pressed != 0x8000_0000 {
+            if self.start_only && self.phase != Some(MenuPhase::Cpu) && pressed != 0x8000_0000 {
                 return None;
             }
             // A physical event changes only one mapped menu control.
             match pressed {
                 MOVE_LEFT => Some("w"),
                 MOVE_RIGHT => Some("r"),
+                MOVE_UP => Some(" "),
+                MOVE_DOWN => Some("e"),
                 ATTACK => Some("n"),
                 SPECIAL => Some("u"),
                 0x8000_0000 => Some("y"),
@@ -1244,6 +1249,13 @@ mod linux {
         assert_eq!(pointer.press(neutral, right, false, false, 53), None);
         assert_eq!(pointer.press(right, neutral, false, false, 54), None);
         assert_eq!(pointer.press(neutral, neutral, false, true, 55), Some("y"));
+        // The CPU panel uses focused controls; the service suspends its menu
+        // pointer there and this existing OS-input boundary emits menu taps.
+        pointer.observe(Some(MenuPhase::Cpu), neutral, false, 60);
+        assert_eq!(pointer.press(neutral, State { y: -10_000, ..neutral }, false, false, 61), Some(" "));
+        assert_eq!(pointer.press(neutral, State { y: 10_000, ..neutral }, false, false, 62), Some("e"));
+        assert_eq!(pointer.press(neutral, attack, false, false, 63), Some("n"));
+        assert_eq!(pointer.press(neutral, State { sources: 4, ..neutral }, false, false, 64), Some("u"));
     }
 
     fn quiescent_path(dir: &Path, build: &str, epoch: u32, slot: u32) -> PathBuf {

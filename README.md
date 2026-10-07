@@ -339,15 +339,19 @@ left/right cycles the character, A selects the current character, X recalls
 your selection, and Start opens stage selection once everyone has selected.
 In stage selection, left/right changes the stage, X returns to characters,
 and A or Start begins the match. At results, A or Start confirms your rematch.
-One stick deflection or button press produces one menu action; release before
+Up/down visits fighter cards and CPU Opponent settings. In that panel,
+left/right changes the focused value, up/down visits Opponent, Difficulty and
+Done, A advances or chooses Done, X goes back, and Start closes without starting
+a match. One stick deflection or button press produces one menu action; release before
 the next action. The controller service starts the helper with `--menu-keys
-start`: then only Start reaches the menus, and the service's menu pointer does
-the rest. Held controls require neutral after startup, a menu phase
+start`: then only Start reaches the outer menus, and the service's menu pointer
+does the rest. The CPU panel suspends that pointer and accepts the focused menu
+controls. Held controls require neutral after startup, a menu phase
 change, focus loss, and entering gameplay.
 
 The map publishes `smashcraft-journal-menu-BUILD-sSLOT.txt`, containing
 `SMASHCRAFT JOURNAL MENU v=1 build=BUILD epoch=EPOCH slot=SLOT phase=PHASE` in
-a complete native preload file. PHASE is CHARACTER, STAGE, RESULT or BLOCKED.
+a complete native preload file. PHASE is CHARACTER, CPU, STAGE, RESULT or BLOCKED.
 Eligible menus refresh every 15 map ticks (normally 250 ms); the helper requires
 a matching publication newer than its startup/previous match and no older than
 one second. Initial character selection uses epoch 0. Results become eligible
@@ -355,7 +359,7 @@ only after all helpers have stopped and the text box has closed. BLOCKED,
 missing, partial or stale receipts suppress menu actions.
 
 Each accepted menu action uses the existing exact-window Enigo text boundary
-to send a finite W/R/N/U/Y press-release pair. It holds no menu keys, rechecks
+to send a finite W/R/Space/E/N/U/Y press-release pair. It holds no menu keys, rechecks
 map permission and game focus per tap, and never activates a window. The map's
 journal menus give those keys fixed menu meanings independent of combat key
 rebindings and mouse position. This covers ordinary fighter/stage/result menus;

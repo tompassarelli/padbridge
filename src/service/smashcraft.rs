@@ -90,6 +90,7 @@ impl Tracker {
         let (_, menu) = self.current.as_ref()?;
         let (phase, shown) = match menu.phase.as_str() {
             "CHARACTER" => ("fighter selection", model::Phase::CharacterSelect),
+            "CPU" => ("opponent settings", model::Phase::CharacterSelect),
             "STAGE" => ("stage selection", model::Phase::StageSelect),
             "RESULT" => ("results", model::Phase::Results),
             _ => ("in a match", model::Phase::Match),
