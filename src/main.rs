@@ -93,11 +93,12 @@ fn target(o: &Options) -> Result<focus::Target, String> {
 }
 
 // Ascending SDL enum order: SDL numbers a virtual gamepad's controls that way.
-const VIRTUAL_BUTTONS: [Button; 7] = [
+const VIRTUAL_BUTTONS: [Button; 8] = [
     Button::South,
     Button::East,
     Button::West,
     Button::North,
+    Button::Back,
     Button::Start,
     Button::LeftShoulder,
     Button::RightShoulder,
@@ -114,6 +115,7 @@ const VIRTUAL_AXES: [Axis; 6] = [
 /// Test seam: an SDL virtual gamepad inside this process, so SDL's own gamepad
 /// event path carries scripted input exactly as it carries a physical pad's.
 /// Stdin lines use SDL's control names: `button a|b|x|y|start|leftshoulder|rightshoulder 0|1`,
+/// `button back 0|1` retains View input; the keyboard layout has no View action.
 /// `axis leftx|lefty|rightx|righty|lefttrigger|righttrigger RAW` (raw joystick
 /// units; SDL maps triggers from -32768..32767 to 0..32767), `detach`, `quit`.
 struct VirtualPad {

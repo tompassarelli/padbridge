@@ -262,6 +262,13 @@ held keys in the operating system's key state, and that a control held through
 refocus must return to neutral. `smashcraft:.github/workflows/companion.yml`
 runs it on GitHub's `windows-latest` and `macos-latest` runners.
 
+The SDL virtual helper also accepts `button back 0|1`, preserving View edges in
+its input history. The playable keyboard layout has no View action; journal
+View saves remain on the journal route. `bun scripts/nativeKeyboardPad.ts` in
+`ts/` replays physical pad deadlines through this helper for native draw timing
+and records independent CLOCK_MONOTONIC write brackets. Use Ctrl+H after
+capture to export the response probe.
+
 ## Observed evidence
 
 The Niri bridge repair passed seven tests (five mapping/rearm tests and two
