@@ -1190,7 +1190,7 @@ mod linux {
                 return None;
             }
             let pressed = menu_buttons(after, start_after) & !menu_buttons(before, start_before);
-            if self.start_only && self.phase != Some(MenuPhase::Cpu) && pressed != 0x8000_0000 {
+            if self.start_only && pressed != 0x8000_0000 {
                 return None;
             }
             // A physical event changes only one mapped menu control.
@@ -1269,13 +1269,13 @@ mod linux {
         assert_eq!(pointer.press(neutral, right, false, false, 53), None);
         assert_eq!(pointer.press(right, neutral, false, false, 54), None);
         assert_eq!(pointer.press(neutral, neutral, false, true, 55), Some("y"));
-        // The CPU panel uses focused controls; the service suspends its menu
-        // pointer there and this existing OS-input boundary emits menu taps.
+        // Opponent settings use the same pointer, without extra key taps.
         pointer.observe(Some(MenuPhase::Cpu), neutral, false, 60);
-        assert_eq!(pointer.press(neutral, State { y: -10_000, ..neutral }, false, false, 61), Some(" "));
-        assert_eq!(pointer.press(neutral, State { y: 10_000, ..neutral }, false, false, 62), Some("e"));
-        assert_eq!(pointer.press(neutral, attack, false, false, 63), Some("n"));
-        assert_eq!(pointer.press(neutral, State { sources: 4, ..neutral }, false, false, 64), Some("u"));
+        assert_eq!(pointer.press(neutral, State { y: -10_000, ..neutral }, false, false, 61), None);
+        assert_eq!(pointer.press(neutral, State { y: 10_000, ..neutral }, false, false, 62), None);
+        assert_eq!(pointer.press(neutral, attack, false, false, 63), None);
+        assert_eq!(pointer.press(neutral, State { sources: 4, ..neutral }, false, false, 64), None);
+        assert_eq!(pointer.press(neutral, neutral, false, true, 65), Some("y"));
     }
 
     fn quiescent_path(dir: &Path, build: &str, epoch: u32, slot: u32) -> PathBuf {

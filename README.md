@@ -93,14 +93,14 @@ stick up past 0.6625 requests jump. Holding Tilt plus shield caps the effective
 stick at 0.65 before tap jump, so the shield can tilt up without jumping.
 Jump buttons keep working while tilting the shield.
 
-In the map's fighter, stage and results menus, the controller service makes
+In the map's fighter, opponent settings, stage and results menus, the controller service makes
 the left stick a pointer, as the hand cursor is in Smash: it moves the desktop
 pointer over the game (the compositor's virtual pointer), A left-clicks to
 choose a tile, chip or button, B right-clicks, and Start still sends Y (stage
 selection, start). The pointer rests inside 0.12 of full deflection, speeds up
 with deflection to the power 1.7, and at full tilt crosses the game window
 in one second. It runs only while the map keeps publishing an open menu
-(CHARACTER, STAGE or RESULT, refreshed every 250 ms) and the helper reports no
+(CHARACTER, CPU, STAGE or RESULT, refreshed every 250 ms) and the helper reports no
 match, and stops within 100 ms of the map publishing BLOCKED for play, where
 the table above applies unchanged (smashcraft:companion/src/service/any_map.rs,
 `MenuCurve`; model::smashcraft_menu_bindings).
@@ -376,8 +376,7 @@ Done, A advances or chooses Done, X goes back, and Start closes without starting
 a match. One stick deflection or button press produces one menu action; release before
 the next action. The controller service starts the helper with `--menu-keys
 start`: then only Start reaches the outer menus, and the service's menu pointer
-does the rest. The CPU panel suspends that pointer and accepts the focused menu
-controls. Held controls require neutral after startup, a menu phase
+does the rest, including in the CPU opponent settings panel. Held controls require neutral after startup, a menu phase
 change, focus loss, and entering gameplay.
 
 The map publishes `smashcraft-journal-menu-BUILD-sSLOT.txt`, containing

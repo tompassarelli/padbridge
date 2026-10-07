@@ -213,7 +213,7 @@ fn a_private_pad_script_drives_the_published_menu_pointer() {
             while started.elapsed() < Duration::from_millis(row[0] as u64) {
                 let menu = newest_menu(&data).ok_or("assigned map has no complete menu publication")?;
                 let fresh = menu.modified.elapsed().is_ok_and(|age| age <= Duration::from_secs(1));
-                let next = fresh && matches!(menu.phase.as_str(), "CHARACTER" | "STAGE" | "RESULT");
+                let next = fresh && matches!(menu.phase.as_str(), "CHARACTER" | "CPU" | "STAGE" | "RESULT");
                 if next != pointing {
                     driver.release(&mut out)?;
                     driver = if next { Driver::menu(curve, true) } else { Driver::keys(PadPreset::Standard) };

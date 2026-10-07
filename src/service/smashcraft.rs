@@ -213,12 +213,12 @@ impl Profile for Smashcraft {
         args
     }
 
-    /// Fighter, stage and results menus, while the map keeps publishing them
+    /// Fighter, opponent settings, stage and results menus, while the map keeps publishing them
     /// (it refreshes an open menu every 250 ms and publishes BLOCKED for play).
     fn pointer_menu(&self) -> bool {
         self.tracker.menu().is_some_and(|menu| {
             self.keys.as_ref().is_none_or(|keys| keys.build == menu.build)
-                && matches!(menu.phase.as_str(), "CHARACTER" | "STAGE" | "RESULT")
+                && matches!(menu.phase.as_str(), "CHARACTER" | "CPU" | "STAGE" | "RESULT")
                 && SystemTime::now().duration_since(menu.modified).is_ok_and(|age| age <= std::time::Duration::from_secs(1))
         })
     }
@@ -320,7 +320,7 @@ mod tests {
         let mut profile = Smashcraft::default();
         assert!(!profile.pointer_menu());
         let now = SystemTime::now();
-        for (phase, pointer) in [("CHARACTER", true), ("STAGE", true), ("RESULT", true), ("BLOCKED", false)] {
+        for (phase, pointer) in [("CHARACTER", true), ("CPU", true), ("CHARACTER", true), ("STAGE", true), ("RESULT", true), ("BLOCKED", false)] {
             profile.tracker.observe(documents, Menu { phase: phase.into(), modified: now, ..menu("b", 0, 1, 0) });
             assert_eq!(profile.pointer_menu(), pointer, "{phase}");
         }
@@ -361,7 +361,7 @@ mod tests {
         // This keyboard build refreshes its menus after the ready marker.
         // It keeps its keys session but uses the pointer only in these menus.
         let key_session = profile.session(&game).unwrap().key;
-        for (phase, pointing) in [("CHARACTER", true), ("STAGE", true), ("RESULT", true), ("BLOCKED", false)] {
+        for (phase, pointing) in [("CHARACTER", true), ("CPU", true), ("CHARACTER", true), ("STAGE", true), ("RESULT", true), ("BLOCKED", false)] {
             std::thread::sleep(Duration::from_millis(20));
             fs::write(data.join("smashcraft-journal-menu-playable-0047-s0.txt"),
                 format!("call Preload( \"SMASHCRAFT JOURNAL MENU v=1 build=playable-0047 epoch=1 slot=0 phase={phase}\" )\nendfunction\n")).unwrap();
