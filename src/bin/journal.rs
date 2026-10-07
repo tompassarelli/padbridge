@@ -1250,12 +1250,48 @@ mod linux {
         dir.join(format!("smashcraft-journal-quiescent-{build}-e{epoch}-s{slot}.pld"))
     }
 
-    fn clear_quiescent(dir: &Path, build: &str, epoch: u32, slot: u32) -> Result<(), String> {
+    fn clear_epoch_acknowledgements(dir: &Path, build: &str, epoch: u32, slot: u32) -> Result<(), String> {
         match fs::remove_file(quiescent_path(dir, build, epoch, slot)) {
             Ok(()) => Ok(()),
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
             Err(error) => Err(format!("clear prior helper quiescence: {error}")),
+        }?;
+        // A new game reuses epoch and chat serials. Old Q files must be gone
+        // before READY lets this epoch request chat or observe quiescence.
+        let prefix = format!("smashcraft-journal-chat-{build}-e{epoch}-s{slot}-n");
+        for entry in fs::read_dir(dir).map_err(|error| format!("read prior chat acknowledgements: {error}"))? {
+            let entry = entry.map_err(|error| format!("read prior chat acknowledgement: {error}"))?;
+            let name = entry.file_name();
+            let serial = name.to_str().and_then(|name| name.strip_prefix(&prefix))
+                .and_then(|name| name.strip_suffix(".pld"))
+                .and_then(|serial| serial.parse::<u32>().ok());
+            if serial.is_some_and(|serial| serial > 0) {
+                fs::remove_file(entry.path()).map_err(|error| format!("clear prior chat acknowledgement: {error}"))?;
+            }
         }
+        Ok(())
+    }
+
+    #[test]
+    fn new_game_clears_only_its_epochs_stale_chat_acknowledgements() {
+        let dir = env::temp_dir().join(format!("chat-ack-reuse-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let chat = |build: &str, epoch, slot, serial| dir.join(format!("smashcraft-journal-chat-{build}-e{epoch}-s{slot}-n{serial}.pld"));
+        let stale = chat("test", 1, 0, 1);
+        let later = chat("test", 1, 0, 2);
+        let retained = [chat("test", 1, 1, 1), chat("test", 2, 0, 1), chat("peer", 1, 0, 1)];
+        for path in [&stale, &later].into_iter().chain(retained.iter()) { publish_symbol(path, b'Q').unwrap(); }
+        publish_symbol(&quiescent_path(&dir, "test", 1, 0), b'Q').unwrap();
+        assert_eq!(publish_symbol(&stale, b'Q').unwrap_err().kind(), io::ErrorKind::AlreadyExists);
+        clear_epoch_acknowledgements(&dir, "test", 1, 0).unwrap();
+        assert!(!stale.exists());
+        assert!(!later.exists());
+        assert!(!quiescent_path(&dir, "test", 1, 0).exists());
+        assert!(retained.iter().all(|path| path.exists()));
+        publish_symbol(&stale, b'Q').unwrap();
+        assert_eq!(publish_symbol(&stale, b'Q').unwrap_err().kind(), io::ErrorKind::AlreadyExists);
+        for path in retained.iter().chain([&stale]) { fs::remove_file(path).unwrap(); }
+        fs::remove_dir(dir).unwrap();
     }
 
     fn validate_lifecycle(command: &ControlCommand, o: &Options, state: ControlState) -> Result<(), String> {
@@ -3822,7 +3858,7 @@ mod linux {
         }
         // Text output stands in for the edit box of a headless client.
         let editbox = o.editbox_display.is_some() || o.text_out.is_some();
-        if !o.follow_matches { clear_quiescent(&o.out, &o.build, o.epoch, o.slot)?; }
+        if !o.follow_matches { clear_epoch_acknowledgements(&o.out, &o.build, o.epoch, o.slot)?; }
         let typist = match (&o.text_out, o.editbox_display.as_ref().or(o.mailbox_display.as_ref())) {
             (Some(path), _) => Some(Typist::file(path)?),
             (None, Some(display)) => Some(Typist::window(
@@ -3946,7 +3982,7 @@ mod linux {
                     sender.chat_quiet = 0;
                     sender.chat_opened = 0;
                     sender.text_receipt_at = None;
-                    clear_quiescent(&o.out, &o.build, o.epoch, o.slot)?;
+                    clear_epoch_acknowledgements(&o.out, &o.build, o.epoch, o.slot)?;
                     sender.enqueue(format!("JR1{epoch}")).map_err(|e| e.to_string())?;
                     waiting_ready = false;
                     waiting_start = true;

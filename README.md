@@ -439,6 +439,11 @@ actions remain suppressed until native chat closes and the map restores its
 receiver. Closing chat leaves the match paused; neutral controls and a fresh
 Start press resume it. No player can resume while another player is typing.
 
+At match admission, the helper removes that epoch and slot's old end and chat
+acknowledgements before announcing readiness. A new game reuses epoch and chat
+request numbers, so these files must not satisfy a new handshake or collide
+with its immutable publication. Other builds, epochs and slots are preserved.
+
 The existing text receipt exposes `chat` (a within-epoch request number),
 `chatState` (0 receiver restored, 1 draining, 2 focus released, 3 native chat
 observed visible), and `chatFrame` (whether `ChatEditBar` was found). State 0
