@@ -299,7 +299,7 @@ pub fn smashcraft_bindings_for(preset: PadPreset) -> Vec<Binding> {
         bind(Y, "Jump", key("i")),
         bind(Rb, if preset == PadPreset::ZJump { "Jump" } else { "Grab" }, key(if preset == PadPreset::ZJump { "i" } else { "o" })),
         bind(Lb, "Tilt", key("p")),
-        bind(Lt, "Light shield", key("9")),
+        bind(Lt, "Light shield", key("t")),
         bind(Rt, "Shield", key("q")),
         bind(Start, "Pause", key("y")),
         bind(LeftLeft, "Move left", key("w")),

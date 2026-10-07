@@ -480,7 +480,7 @@ mod tests {
         driver.step(&pad, true, 0.1, &mut out).unwrap();
         let mut pressed = take(&mut out);
         pressed.sort();
-        assert_eq!(pressed, ["down 9", "down j", "down w"]);
+        assert_eq!(pressed, ["down j", "down t", "down w"]);
         // Focus loss releases them; back in focus nothing presses until the pad is neutral.
         driver.step(&pad, false, 0.0, &mut out).unwrap();
         assert_eq!(take(&mut out).len(), 3);
