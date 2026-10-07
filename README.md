@@ -412,13 +412,14 @@ with how much it takes at once: in 0.0.48's native bot session, the 16 records
 (608 characters) typed after a 2 s stop held the client about 180 ms, and its
 input stayed 15–25 frames late for 5 s
 (smashcraft:evidence/bot-session-0048-native-20261006/). So the helper types
-at most 160 characters past the record the receipt says arrived, and while a
-record waits untyped, the next row packets join it with `|` (at most 16
-packets, the map's `RECORD_PACKETS`, and only while the record's envelope stays
-within those 160 characters): a backlog takes 5–8 characters a frame instead
-of 19. Without that last bound, 16 joined packets of moving sticks made a
-record of about 480 characters, typed at once after a receipt; 0.0.49's
-native bot session, with pad beats, typed records of up to 268.
+at most 160 characters past the record the receipt says arrived. While a
+row packet waits untyped, consecutive packets from the same epoch combine
+using the existing `I5` message encoding, up to 64 frames and only while the
+whole envelope stays within those 160 characters. Holds keep buttons, axes
+and triggers; every press, release and other edge retains its original frame.
+Already typed packets and control records stay separate. The native #86
+capture's 28 neutral frames used 155 characters as joined `I4` packets;
+the same frames use 37 characters in one `I5` envelope.
 The map writes a dirty text receipt every two ticks (at most 30 per client
 per second), so the smaller window can drain promptly. The typing cost
 model bounds 160 characters at 12.8 ms; native receipt-write cost remains
