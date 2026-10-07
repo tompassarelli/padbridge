@@ -419,7 +419,7 @@ and the focus arguments: every text the helper would type into the game's
 window (journal envelopes and menu keys) is appended to FILE as one line, and
 `--out` names the folder the headless client writes its files to. There is
 no window, so focus never suspends output; chat's Return key needs a game
-window and stops the helper. `bun wisp parity headless` starts it this way
+window and stops the helper. `bun wisp integrity headless` starts it this way
 (smashcraft:docs/typescript.md).
 
 The explicit `--ready-file PATH --epoch-monotonic-ns NS` mode remains for native
