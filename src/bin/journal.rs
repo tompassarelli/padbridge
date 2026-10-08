@@ -4724,7 +4724,8 @@ mod linux {
             }
             let pause_active = editbox && paused && !prepared && pause_barrier.is_none()
                 && !stop_capture && !waiting_ready && !waiting_start && !start_held
-                && eligible && recovery.ready && device.is_some();
+                && eligible && recovery.ready && device.is_some()
+                && mailbox.as_ref().is_some_and(|sender| sender.chat_state == 0 && sender.is_idle());
             let pause_keys = pause_input.step(pause_active, recovery.physical, now);
             if !pause_keys.is_empty() {
                 let sender = mailbox.as_mut().expect("paused editbox sender");
