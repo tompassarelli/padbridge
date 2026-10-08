@@ -1211,6 +1211,85 @@ mod linux {
         }
     }
 
+    #[derive(Default)]
+    struct PauseInput {
+        armed: bool,
+        buttons: u32,
+        next_motion_ns: u128,
+    }
+
+    impl PauseInput {
+        fn step(&mut self, active: bool, physical: State, now_ns: u128) -> String {
+            let (x, y) = c_stick(physical.cx, physical.cy);
+            let (_, menu_y) = melee_stick(physical.x, physical.y);
+            let buttons = physical.sources & ((1 << 0) | (1 << 2) | (1 << 5))
+                | if menu_y < 0 { 1 << 8 } else if menu_y > 0 { 1 << 9 } else { 0 };
+            let moving = x != 0 || y != 0 || physical.lt > 4_000 || physical.rt > 4_000
+                || physical.sources & ((1 << 1) | (1 << 4)) != 0;
+            if !active {
+                self.armed = false;
+                self.buttons = buttons;
+                self.next_motion_ns = 0;
+                return String::new();
+            }
+            if !self.armed {
+                self.buttons = buttons;
+                self.armed = buttons == 0 && !moving;
+                return String::new();
+            }
+            let pressed = buttons & !self.buttons;
+            self.buttons = buttons;
+            let mut keys = String::new();
+            for (bit, key) in [(1 << 0, 'n'), (1 << 2, 'u'), (1 << 5, 'h'), (1 << 8, ' '), (1 << 9, 'e')] {
+                if pressed & bit != 0 { keys.push(key); }
+            }
+            if moving && now_ns >= self.next_motion_ns {
+                self.next_motion_ns = now_ns + 33_333_334;
+                if x < 0 { keys.push('j'); } else if x > 0 { keys.push('l'); }
+                if y < 0 { keys.push('i'); } else if y > 0 { keys.push('k'); }
+                if physical.lt > 4_000 { keys.push('-'); }
+                if physical.rt > 4_000 { keys.push('='); }
+                if physical.sources & (1 << 4) != 0 { keys.push('o'); }
+                if physical.sources & (1 << 1) != 0 { keys.push('p'); }
+            }
+            keys
+        }
+    }
+
+    #[test]
+    fn paused_pad_camera_repeats_motion_but_hud_and_menu_are_edges() {
+        let mut input = PauseInput::default();
+        let neutral = State::default();
+        assert_eq!(input.step(true, neutral, 0), "");
+        for (physical, expected) in [
+            (State { cx: -32_767, cy: -32_767, ..neutral }, "ji"),
+            (State { cx: 32_767, cy: 32_767, ..neutral }, "lk"),
+            (State { lt: 32_767, rt: 32_767, ..neutral }, "-="),
+            (State { sources: (1 << 1) | (1 << 4), ..neutral }, "op"),
+            (State { sources: (1 << 0) | (1 << 2) | (1 << 5), y: -32_767, ..neutral }, "nuh "),
+            (State { y: 32_767, ..neutral }, "e"),
+        ] {
+            input.next_motion_ns = 0;
+            input.buttons = 0;
+            assert_eq!(input.step(true, physical, 0), expected);
+            assert_eq!(input.step(true, physical, 1), "");
+            let repeated = input.step(true, physical, 33_333_334);
+            assert_eq!(repeated, if matches!(expected, "nuh " | "e") { "" } else { expected });
+        }
+    }
+
+    #[test]
+    fn paused_pad_never_types_in_live_play_or_after_focus_loss_until_neutral() {
+        let mut input = PauseInput::default();
+        let moving = State { cx: 32_767, sources: 1 << 5, ..State::default() };
+        assert_eq!(input.step(false, moving, 0), "");
+        assert_eq!(input.step(true, moving, 1), "");
+        assert_eq!(input.step(true, State::default(), 2), "");
+        assert_eq!(input.step(true, moving, 3), "hl");
+        assert_eq!(input.step(false, moving, 100_000_000), "");
+        assert_eq!(input.step(true, moving, 200_000_000), "");
+    }
+
     #[test]
     fn menu_requires_fresh_complete_matching_map_permission() {
         let dir = env::temp_dir().join(format!("journal-menu-{}", std::process::id()));
@@ -4077,6 +4156,7 @@ mod linux {
         let mut waiting_ready = o.follow_matches;
         let mut waiting_start = false;
         let mut menu_input = MenuInput { start_only: o.menu_start_only, ..MenuInput::default() };
+        let mut pause_input = PauseInput::default();
         let mut menu = None;
         let mut ended = false;
         let mut end_marker_sent = false;
@@ -4640,6 +4720,18 @@ mod linux {
                             control_sequence - 1
                         );
                     }
+                }
+            }
+            let pause_active = editbox && paused && !prepared && pause_barrier.is_none()
+                && !stop_capture && !waiting_ready && !waiting_start && !start_held
+                && eligible && recovery.ready && device.is_some();
+            let pause_keys = pause_input.step(pause_active, recovery.physical, now);
+            if !pause_keys.is_empty() {
+                let sender = mailbox.as_mut().expect("paused editbox sender");
+                if sender.eligible().map_err(|error| error.to_string())? {
+                    sender.typist.text(&pause_keys).map_err(|error| format!("pause controls: {error}"))?;
+                } else {
+                    pause_input.step(false, recovery.physical, now);
                 }
             }
             if ended && !end_marker_sent {
