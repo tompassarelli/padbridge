@@ -131,6 +131,10 @@ releasing LT while RT is held retains shield; B and Y share one held jump
 action. Stick-up is only up: aim, up-special, getup and ledge stand. Hold
 duration remains available to the game's jump logic.
 
+Hold Tilt (LB or P) with left or right and press Special (X or U) to use
+neutral special facing that direction. Without Tilt, left or right selects
+side special. Up and down still select their specials while Tilt is held.
+
 Down is active only at **0.6625** of full scale (53 of Melee's 80 units; a
 left-stick axis counts from 21709), after the radial clamp. Melee has no single
 down threshold; our design targets are: fast-fall, platform drop,
