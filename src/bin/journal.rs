@@ -1220,7 +1220,7 @@ mod linux {
 
     impl PauseInput {
         fn step(&mut self, active: bool, physical: State, now_ns: u128) -> String {
-            let (x, y) = c_stick(physical.cx, physical.cy);
+            let (x, y) = melee_stick(physical.cx, physical.cy);
             let (_, menu_y) = melee_stick(physical.x, physical.y);
             let buttons = physical.sources & ((1 << 0) | (1 << 2) | (1 << 5))
                 | if menu_y < 0 { 1 << 8 } else if menu_y > 0 { 1 << 9 } else { 0 };
