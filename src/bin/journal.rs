@@ -40,6 +40,9 @@ mod linux {
     };
 
     const HZ: u128 = 60;
+    /// How long a local Start holds rows for the map's PREPARE before input
+    /// resumes; native round trips took up to 0.85 s under load (#206).
+    const START_SEAL_TIMEOUT: Duration = Duration::from_secs(2);
     const LAST_FRAME: u32 = 2_147_483_646;
     const ALPHABET: &[u8; 64] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-_";
     const MOVE_LEFT: u32 = 1 << 0;
@@ -2371,6 +2374,8 @@ mod linux {
         assert_eq!(hold.request(11_000_000_000, 8).as_deref(), Some("JM10000000008"));
     }
 
+    /// Start asks every client to pause before the frame it was pressed in, so
+    /// the pause frame follows the press, not the network round trip (#206).
     fn pause_request_wire(
         event: &evdev::InputEvent,
         start_held: &mut bool,
@@ -2378,6 +2383,7 @@ mod linux {
         sequence: u32,
         paused: bool,
         pending: bool,
+        frame: u32,
     ) -> Option<String> {
         let EventSummary::Key(_, Key::BTN_START, value) = event.destructure() else {
             return None;
@@ -2389,10 +2395,17 @@ mod linux {
         if !pressed || pending {
             return None;
         }
-        Some(format!(
-            "JP1{epoch:010}{sequence:010}{}",
-            if paused { 'R' } else { 'P' }
-        ))
+        Some(if paused {
+            format!("JP1{epoch:010}{sequence:010}R")
+        } else {
+            format!("JP1{epoch:010}{sequence:010}P{frame:010}")
+        })
+    }
+
+    /// The first frame a Start press at `ns` can still stop: its own frame,
+    /// or the first unpublished one when the press was read late.
+    fn start_frame(segment: FrameSegment, ns: u128, next_frame: u32) -> u32 {
+        frame_at(ns, segment).unwrap_or(next_frame).max(next_frame)
     }
 
     #[test]
@@ -2402,26 +2415,26 @@ mod linux {
         let up = evdev::InputEvent::new(evdev::EventType::KEY.0, Key::BTN_START.0, 0);
         let mut held = false;
         assert_eq!(
-            pause_request_wire(&down, &mut held, 7, 1, false, false).as_deref(),
-            Some("JP100000000070000000001P")
+            pause_request_wire(&down, &mut held, 7, 1, false, false, 168).as_deref(),
+            Some("JP100000000070000000001P0000000168")
         );
         assert_eq!(
-            pause_request_wire(&repeat, &mut held, 7, 1, false, false),
+            pause_request_wire(&repeat, &mut held, 7, 1, false, false, 168),
             None
         );
         assert_eq!(
-            pause_request_wire(&down, &mut held, 7, 3, true, false),
+            pause_request_wire(&down, &mut held, 7, 3, true, false, 168),
             None
         );
-        assert_eq!(pause_request_wire(&up, &mut held, 7, 3, true, false), None);
+        assert_eq!(pause_request_wire(&up, &mut held, 7, 3, true, false, 168), None);
         assert_eq!(
-            pause_request_wire(&down, &mut held, 7, 3, true, false).as_deref(),
+            pause_request_wire(&down, &mut held, 7, 3, true, false, 168).as_deref(),
             Some("JP100000000070000000003R")
         );
-        pause_request_wire(&up, &mut held, 7, 3, true, true);
-        assert_eq!(pause_request_wire(&down, &mut held, 7, 3, true, true), None);
+        pause_request_wire(&up, &mut held, 7, 3, true, true, 168);
+        assert_eq!(pause_request_wire(&down, &mut held, 7, 3, true, true, 168), None);
         assert_eq!(
-            pause_request_wire(&down, &mut held, 7, 3, true, false),
+            pause_request_wire(&down, &mut held, 7, 3, true, false, 168),
             None
         );
     }
@@ -3256,7 +3269,7 @@ mod linux {
         input.rearm(0, false, false);
         assert!(!input.gameplay_armed);
         let start = evdev::InputEvent::new(evdev::EventType::KEY.0, Key::BTN_START.0, 1);
-        assert!(pause_request_wire(&start, &mut false, 7, 3, true, !input.armed).is_some());
+        assert!(pause_request_wire(&start, &mut false, 7, 3, true, !input.armed, 168).is_some());
         assert!(!input.accepts(&ranges, down, false, true).unwrap());
         assert!(!input.accepts(&ranges, up, false, true).unwrap());
         assert!(input.accepts(&ranges, down, false, true).unwrap());
@@ -3899,7 +3912,7 @@ mod linux {
         menu.observe(Some(MenuPhase::Character), State::default(), false, 12_000_000);
         assert_eq!(menu.press(State::default(), held, false, false, 13_000_000), Some("n"));
         let start_down = evdev::InputEvent::new(evdev::EventType::KEY.0, Key::BTN_START.0, 1);
-        assert!(pause_request_wire(&start_down, &mut false, 7, 3, true, !recovery.ready).is_some());
+        assert!(pause_request_wire(&start_down, &mut false, 7, 3, true, !recovery.ready, 168).is_some());
         // Recovery of neutral state also permits the first genuinely new tap.
         input.restore(State::default(), false, 20_000_000, true);
         assert!(input.accepts(&ranges, timed_button(21_000_000, true), false, true).unwrap());
@@ -4056,6 +4069,9 @@ mod linux {
         let mut stop_capture = false;
         let mut pause_barrier = None::<u32>;
         let mut pause_request_ns = None::<u128>;
+        // A local Start's pause frame and when to stop waiting for the map's
+        // PREPARE: rows stop before that frame until the round starts.
+        let mut start_seal = None::<(u32, Instant)>;
         let mut moment_hold = MomentHold::default();
         let mut pending = Vec::<String>::new();
         let running = Arc::new(AtomicBool::new(true));
@@ -4083,6 +4099,7 @@ mod linux {
                     paused = false;
                     prepared = false;
                     pause_barrier = None;
+                    start_seal = None;
                     stop_capture = false;
                     ended = false;
                     end_marker_sent = false;
@@ -4219,6 +4236,8 @@ mod linux {
                 let start_before = start_held;
                 if editbox { moment_hold.observe(&event, event_ns(&event)?); }
                 if editbox {
+                    let start_ns = event_ns(&event)?;
+                    let frame = start_frame(segment, start_ns, next_frame);
                     if let Some(wire) = pause_request_wire(
                         &event,
                         &mut start_held,
@@ -4227,12 +4246,21 @@ mod linux {
                         paused,
                         prepared
                             || pause_barrier.is_some()
+                            || start_seal.is_some()
                             || stop_capture
                             || waiting_ready
                             || waiting_start
                             || !eligible
                             || !recovery_ready,
+                        frame,
                     ) {
+                        if !paused {
+                            start_seal = Some((frame, Instant::now() + START_SEAL_TIMEOUT));
+                            pause_request_ns.get_or_insert(start_ns);
+                            if o.trace {
+                                eprintln!("control state=START_SEAL frame={frame} mono_ns={start_ns}");
+                            }
+                        }
                         mailbox
                             .as_mut()
                             .expect("editbox sender")
@@ -4286,6 +4314,7 @@ mod linux {
                     waiting_start = false;
                     prepared = false;
                     pause_barrier = None;
+                    start_seal = None;
                     edges.clear();
                     snapshots.clear();
                     pending.clear();
@@ -4315,12 +4344,9 @@ mod linux {
                     );
                     pause_after_seal = Some(command);
                 } else if command.state == ControlState::PauseCommit && paused && prepared {
-                    if command.requested_frame < next_frame {
-                        return Err(format!(
-                            "pause barrier {} precedes helper frontier {next_frame}",
-                            command.requested_frame
-                        ));
-                    }
+                    // Another player's Start may stop the match before this
+                    // helper's frontier: its rows past the barrier run after
+                    // the resume.
                     paused = false;
                     prepared = false;
                     pause_request_ns = None;
@@ -4343,14 +4369,18 @@ mod linux {
                     }
                     control_sequence += 1;
                 } else if command.state == ControlState::Resumed && paused && !prepared {
-                    if command.requested_frame != next_frame {
+                    if command.requested_frame > next_frame {
                         return Err(format!(
-                            "resume requested frame {} does not match paused cursor {next_frame}",
+                            "resume requested frame {} is past paused cursor {next_frame}",
                             command.requested_frame
                         ));
                     }
+                    // The match resumes at the paused frame; rows this helper
+                    // already sent past it play first, so its clock starts
+                    // that many frames later and stays level with the others.
+                    let ahead = u128::from(next_frame - command.requested_frame);
                     segment = FrameSegment {
-                        epoch_ns: publication.epoch_ns,
+                        epoch_ns: publication.epoch_ns + (ahead * 1_000_000_000).div_ceil(HZ),
                         first_frame: next_frame,
                     };
                     state = State { preset: o.preset, tap_jump: o.tap_jump, triggers: o.triggers, ..State::default() };
@@ -4368,14 +4398,14 @@ mod linux {
                         o.slot,
                         command.sequence,
                         command.state,
-                        next_frame,
+                        command.requested_frame,
                         &mut mailbox,
                     )
                     .map_err(|e| e.to_string())?;
                     if o.trace {
                         eprintln!(
-                            "control sequence={} state=RESUME frame={} epoch_ns={} read_ns={} uncertainty_ns={} timestamp_resolution_ns={}",
-                            command.sequence, next_frame, publication.epoch_ns, publication.read_ns,
+                            "control sequence={} state=RESUME frame={} frontier={next_frame} epoch_ns={} read_ns={} uncertainty_ns={} timestamp_resolution_ns={}",
+                            command.sequence, command.requested_frame, publication.epoch_ns, publication.read_ns,
                             publication.uncertainty_ns, control_clock.timestamp_resolution_ns
                         );
                     }
@@ -4388,11 +4418,18 @@ mod linux {
             // uncertainty bound and freeze the output horizon there. This
             // preserves earlier rows while the sender catches up to a finite
             // seal; later input stays queued until the pause boundary is set.
+            if start_seal.is_some_and(|(_, deadline)| Instant::now() >= deadline) && pause_after_seal.is_none() && !paused {
+                // The map dropped the request (another round was in flight):
+                // input continues from the press.
+                start_seal = None;
+                pause_request_ns = None;
+                eprintln!("control state=START_SEAL_EXPIRED frontier={next_frame}");
+            }
             let output_ready = mailbox.as_ref().is_none_or(|sender| sender.queued.frame_credit());
             let discard_before_ns = pause_request_ns.unwrap_or(control_read.discard_before_ns);
             while let Some(capture) = pending_input.pop_for_output(
                 output_ready,
-                paused || waiting_start || pause_after_seal.is_some(),
+                paused || waiting_start || pause_after_seal.is_some() || start_seal.is_some(),
                 discard_before_ns,
             )? {
                 let (event, start_before, event_start_held) = match capture {
@@ -4457,12 +4494,12 @@ mod linux {
                 let mut completed_through = frame_through(segment, now);
                 if let (Some(command), Some(published_ns)) = (pause_after_seal.as_ref(), pause_request_ns) {
                     let assigned_through = edges.keys().chain(snapshots.keys()).copied().max().unwrap_or(0);
-                    completed_through = completed_through.min(pause_seal_frontier(
-                        segment,
-                        published_ns,
-                        command.requested_frame,
-                        assigned_through,
-                    ));
+                    completed_through = completed_through.min(match start_seal {
+                        Some((frame, _)) => frame.max(command.requested_frame) - 1,
+                        None => pause_seal_frontier(segment, published_ns, command.requested_frame, assigned_through),
+                    });
+                } else if let Some((frame, _)) = start_seal {
+                    completed_through = completed_through.min(frame - 1);
                 }
                 if let Some(barrier) = pause_barrier {
                     completed_through = completed_through.min(barrier - 1);
@@ -4533,6 +4570,7 @@ mod linux {
                     paused = true;
                     prepared = true;
                     pause_request_ns = None;
+                    start_seal = None;
                     submit_control_ack(
                         &o.out,
                         &o.build,
@@ -4554,9 +4592,6 @@ mod linux {
                 }
                 if pause_barrier.is_some_and(|barrier| next_frame >= barrier) {
                     let barrier = pause_barrier.take().unwrap();
-                    if next_frame != barrier {
-                        return Err("pause barrier cursor advanced past its requested frame".into());
-                    }
                     if !pending.is_empty() {
                         submit_packet(
                             &o.out,
