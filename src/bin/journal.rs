@@ -2476,7 +2476,8 @@ mod linux {
         epoch: u32,
         sequence: u32,
         paused: bool,
-        pending: bool,
+        pause_pending: bool,
+        blocked: bool,
         frame: u32,
     ) -> Option<String> {
         let EventSummary::Key(_, Key::BTN_START, value) = event.destructure() else {
@@ -2486,10 +2487,12 @@ mod linux {
         if value != 2 {
             *start_held = value != 0;
         }
-        if !pressed || pending {
+        if !pressed || blocked {
             return None;
         }
-        Some(if paused {
+        // While a pause is still settling, Start asks to resume: the map
+        // resumes right after the pause commits (#206).
+        Some(if paused || pause_pending {
             format!("JP1{epoch:010}{sequence:010}R")
         } else {
             format!("JP1{epoch:010}{sequence:010}P{frame:010}")
@@ -2509,27 +2512,44 @@ mod linux {
         let up = evdev::InputEvent::new(evdev::EventType::KEY.0, Key::BTN_START.0, 0);
         let mut held = false;
         assert_eq!(
-            pause_request_wire(&down, &mut held, 7, 1, false, false, 168).as_deref(),
+            pause_request_wire(&down, &mut held, 7, 1, false, false, false, 168).as_deref(),
             Some("JP100000000070000000001P0000000168")
         );
         assert_eq!(
-            pause_request_wire(&repeat, &mut held, 7, 1, false, false, 168),
+            pause_request_wire(&repeat, &mut held, 7, 1, false, false, false, 168),
             None
         );
         assert_eq!(
-            pause_request_wire(&down, &mut held, 7, 3, true, false, 168),
+            pause_request_wire(&down, &mut held, 7, 3, true, false, false, 168),
             None
         );
-        assert_eq!(pause_request_wire(&up, &mut held, 7, 3, true, false, 168), None);
+        assert_eq!(pause_request_wire(&up, &mut held, 7, 3, true, false, false, 168), None);
         assert_eq!(
-            pause_request_wire(&down, &mut held, 7, 3, true, false, 168).as_deref(),
+            pause_request_wire(&down, &mut held, 7, 3, true, false, false, 168).as_deref(),
             Some("JP100000000070000000003R")
         );
-        pause_request_wire(&up, &mut held, 7, 3, true, true, 168);
-        assert_eq!(pause_request_wire(&down, &mut held, 7, 3, true, true, 168), None);
+        pause_request_wire(&up, &mut held, 7, 3, true, false, true, 168);
+        assert_eq!(pause_request_wire(&down, &mut held, 7, 3, true, false, true, 168), None);
         assert_eq!(
-            pause_request_wire(&down, &mut held, 7, 3, true, false, 168),
+            pause_request_wire(&down, &mut held, 7, 3, true, false, false, 168),
             None
+        );
+    }
+
+    #[test]
+    fn controller_start_while_pause_settles_requests_resume() {
+        let down = evdev::InputEvent::new(evdev::EventType::KEY.0, Key::BTN_START.0, 1);
+        let up = evdev::InputEvent::new(evdev::EventType::KEY.0, Key::BTN_START.0, 0);
+        let mut held = false;
+        // Sealed before the map's PREPARE, then prepared before its commit.
+        assert_eq!(
+            pause_request_wire(&down, &mut held, 7, 1, false, true, false, 200).as_deref(),
+            Some("JP100000000070000000001R")
+        );
+        pause_request_wire(&up, &mut held, 7, 1, false, true, false, 200);
+        assert_eq!(
+            pause_request_wire(&down, &mut held, 7, 2, true, true, false, 200).as_deref(),
+            Some("JP100000000070000000002R")
         );
     }
 
@@ -3364,7 +3384,7 @@ mod linux {
         input.rearm(0, false, false);
         assert!(!input.gameplay_armed);
         let start = evdev::InputEvent::new(evdev::EventType::KEY.0, Key::BTN_START.0, 1);
-        assert!(pause_request_wire(&start, &mut false, 7, 3, true, !input.armed, 168).is_some());
+        assert!(pause_request_wire(&start, &mut false, 7, 3, true, false, !input.armed, 168).is_some());
         assert!(!input.accepts(&ranges, down, false, true).unwrap());
         assert!(!input.accepts(&ranges, up, false, true).unwrap());
         assert!(input.accepts(&ranges, down, false, true).unwrap());
@@ -4008,7 +4028,7 @@ mod linux {
         menu.observe(Some(MenuPhase::Character), State::default(), false, 12_000_000);
         assert_eq!(menu.press(State::default(), held, false, false, 13_000_000), Some("n"));
         let start_down = evdev::InputEvent::new(evdev::EventType::KEY.0, Key::BTN_START.0, 1);
-        assert!(pause_request_wire(&start_down, &mut false, 7, 3, true, !recovery.ready, 168).is_some());
+        assert!(pause_request_wire(&start_down, &mut false, 7, 3, true, false, !recovery.ready, 168).is_some());
         // Recovery of neutral state also permits the first genuinely new tap.
         input.restore(State::default(), false, 20_000_000, true);
         assert!(input.accepts(&ranges, timed_button(21_000_000, true), false, true).unwrap());
@@ -4335,23 +4355,22 @@ mod linux {
                 if editbox {
                     let start_ns = event_ns(&event)?;
                     let frame = start_frame(segment, start_ns, next_frame);
+                    let pause_pending = prepared || pause_barrier.is_some() || start_seal.is_some();
                     if let Some(wire) = pause_request_wire(
                         &event,
                         &mut start_held,
                         o.epoch,
                         control_sequence,
                         paused,
-                        prepared
-                            || pause_barrier.is_some()
-                            || start_seal.is_some()
-                            || stop_capture
-                            || waiting_ready
-                            || waiting_start
-                            || !eligible
-                            || !recovery_ready,
+                        pause_pending,
+                        stop_capture || waiting_ready || waiting_start || !eligible || !recovery_ready,
                         frame,
                     ) {
-                        if !paused {
+                        if pause_pending {
+                            if o.trace {
+                                eprintln!("control state=RESUME_QUEUED sequence={control_sequence} mono_ns={start_ns}");
+                            }
+                        } else if !paused {
                             start_seal = Some((frame, Instant::now() + START_SEAL_TIMEOUT));
                             pause_request_ns.get_or_insert(start_ns);
                             if o.trace {
