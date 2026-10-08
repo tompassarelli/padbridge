@@ -32,6 +32,7 @@ pub fn active(input: &InputView, control: Control) -> bool {
     let [rx, ry] = input.right;
     let button = |b: Button| input.pressed(b);
     match control {
+        Control::LeftStick => button(Button::LeftStick),
         Control::A => button(Button::A),
         Control::B => button(Button::B),
         Control::X => button(Button::X),

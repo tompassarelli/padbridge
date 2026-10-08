@@ -50,6 +50,7 @@ mod linux {
     const MOVE_DOWN: u32 = 1 << 2;
     const MOVE_UP: u32 = 1 << 3;
     const JUMP: u32 = 1 << 4;
+    const SHORT_HOP: u32 = 1 << 16;
     const ATTACK: u32 = 1 << 5;
     const SPECIAL: u32 = 1 << 6;
     const GRAB: u32 = 1 << 7;
@@ -2066,6 +2067,9 @@ mod linux {
 
     fn action_state(s: State) -> u32 {
         let mut held = 0;
+        if s.sources & (1 << 6) != 0 {
+            held |= SHORT_HOP;
+        }
         if s.sources & (1 << 0) != 0 {
             held |= ATTACK;
         }
@@ -2118,6 +2122,17 @@ mod linux {
             held |= RIGHT_TRIGGER;
         }
         held
+    }
+
+    #[test]
+    fn left_stick_click_journals_short_hop_press_and_release_spec_321() {
+        for preset in [wc3_controller::model::PadPreset::Standard, wc3_controller::model::PadPreset::ZJump] {
+            let mut state = State { preset, ..State::default() };
+            update_state(&[None; 6], &mut state, evdev::InputEvent::new(evdev::EventType::KEY.0, Key::BTN_THUMBL.0, 1));
+            assert_eq!(action_state(state), SHORT_HOP);
+            update_state(&[None; 6], &mut state, evdev::InputEvent::new(evdev::EventType::KEY.0, Key::BTN_THUMBL.0, 0));
+            assert_eq!(action_state(state), 0);
+        }
     }
 
     fn axis_byte(raw: i16) -> i16 {
@@ -2454,6 +2469,7 @@ mod linux {
                     Key::BTN_NORTH => Some(1 << 3),
                     Key::BTN_TL => Some(1 << 4),
                     Key::BTN_TR => Some(1 << 5),
+                    Key::BTN_THUMBL => Some(1 << 6),
                     _ => None,
                 };
                 if let Some(bit) = bit {
@@ -3339,6 +3355,7 @@ mod linux {
                     | Key::BTN_NORTH
                     | Key::BTN_TL
                     | Key::BTN_TR
+                    | Key::BTN_THUMBL
             ),
             EventSummary::AbsoluteAxis(_, code, _) => matches!(
                 *code,
@@ -3949,7 +3966,7 @@ mod linux {
             rt: normalized_trigger(&axes, Abs::ABS_RZ, axis_value(Abs::ABS_RZ)),
             ..State::default()
         };
-        for key in [Key::BTN_SOUTH, Key::BTN_EAST, Key::BTN_WEST, Key::BTN_NORTH, Key::BTN_TL, Key::BTN_TR] {
+        for key in [Key::BTN_SOUTH, Key::BTN_EAST, Key::BTN_WEST, Key::BTN_NORTH, Key::BTN_TL, Key::BTN_TR, Key::BTN_THUMBL] {
             if key_state.contains(key) {
                 update_state(&axes, &mut state, evdev::InputEvent::new(evdev::EventType::KEY.0, labels.position(key.0), 1));
             }

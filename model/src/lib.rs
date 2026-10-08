@@ -212,6 +212,7 @@ impl ClientMessage {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Control {
+    LeftStick,
     A,
     B,
     X,
@@ -350,6 +351,7 @@ pub fn smashcraft_bindings_with(preset: PadPreset, triggers: TriggerShields) -> 
         bind(X, "Special", key("u")),
         bind(B, if preset == PadPreset::ZJump { "Grab" } else { "Jump" }, key(if preset == PadPreset::ZJump { "o" } else { "i" })),
         bind(Y, "Jump", key("i")),
+        bind(LeftStick, "Short hop", key("z")),
         bind(Rb, if preset == PadPreset::ZJump { "Jump" } else { "Grab" }, key(if preset == PadPreset::ZJump { "i" } else { "o" })),
         bind(Lb, "Tilt", key("p")),
         shield(Lt, triggers.left),

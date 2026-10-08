@@ -65,6 +65,7 @@ intended simulation frame.
 | --- | --- |
 | A / X | Attack N / special U |
 | B or Y | Jump I |
+| Left stick click (L3) | Short hop Z (even held) |
 | RB / LB | Grab O / Tilt P |
 | LT / RT | Full shield Q / full shield Q |
 | Start | Y |

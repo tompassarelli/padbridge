@@ -93,7 +93,7 @@ fn target(o: &Options) -> Result<focus::Target, String> {
 }
 
 // Ascending SDL enum order: SDL numbers a virtual gamepad's controls that way.
-const VIRTUAL_BUTTONS: [Button; 8] = [
+const VIRTUAL_BUTTONS: [Button; 9] = [
     Button::South,
     Button::East,
     Button::West,
@@ -102,6 +102,7 @@ const VIRTUAL_BUTTONS: [Button; 8] = [
     Button::Start,
     Button::LeftShoulder,
     Button::RightShoulder,
+    Button::LeftStick,
 ];
 const VIRTUAL_AXES: [Axis; 6] = [
     Axis::LeftX,
@@ -318,6 +319,7 @@ fn sample(pad: &Gamepad) -> Sample {
         lb: pad.button(Button::LeftShoulder),
         rb: pad.button(Button::RightShoulder),
         start: pad.button(Button::Start),
+        left_stick: pad.button(Button::LeftStick),
     }
 }
 

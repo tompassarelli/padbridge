@@ -335,6 +335,7 @@ pub fn sample_of(input: &InputView) -> crate::Sample {
         lb: button(model::Button::Lb),
         rb: button(model::Button::Rb),
         start: button(model::Button::Start),
+        left_stick: button(model::Button::LeftStick),
     }
 }
 
@@ -470,7 +471,7 @@ mod tests {
         let mut pad = InputView::default();
         // Arms on a neutral pad.
         driver.step(&pad, true, 0.0, &mut out).unwrap();
-        for (button, key) in [(Button::A, "n"), (Button::X, "u"), (Button::B, "i"), (Button::Rb, "o"), (Button::Lb, "p"), (Button::Start, "y")] {
+        for (button, key) in [(Button::A, "n"), (Button::X, "u"), (Button::B, "i"), (Button::Rb, "o"), (Button::Lb, "p"), (Button::Start, "y"), (Button::LeftStick, "z")] {
             pad.press(button, true);
             driver.step(&pad, true, 0.0, &mut out).unwrap();
             pad.press(button, false);
@@ -522,7 +523,7 @@ mod tests {
                 let shown: std::collections::BTreeSet<String> = model::smashcraft_bindings_with(model::PadPreset::Standard, triggers).into_iter()
                     .filter_map(|binding| match binding.press { Press::Key(key) => Some(key), _ => None }).collect();
                 let pressed: std::collections::BTreeSet<String> = [
-                    crate::Action::Attack, crate::Action::Special, crate::Action::Jump, crate::Action::Grab, crate::Action::Shield, crate::Action::LightShield, crate::Action::Walk,
+                    crate::Action::Attack, crate::Action::Special, crate::Action::Jump, crate::Action::ShortHop, crate::Action::Grab, crate::Action::Shield, crate::Action::LightShield, crate::Action::Walk,
                     crate::Action::Start, crate::Action::Left, crate::Action::Right, crate::Action::Down, crate::Action::Up,
                     crate::Action::CLeft, crate::Action::CRight, crate::Action::CUp, crate::Action::CDown,
                 ].into_iter().filter(|action| match action {

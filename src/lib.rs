@@ -33,6 +33,7 @@ pub struct Sample {
     pub lb: bool,
     pub rb: bool,
     pub start: bool,
+    pub left_stick: bool,
 }
 
 impl Sample {
@@ -41,7 +42,7 @@ impl Sample {
             && stick::c_stick(self.right_x, self.right_y) == (0, 0)
             && self.left_trigger <= TRIGGER_THRESHOLD
             && self.right_trigger <= TRIGGER_THRESHOLD
-            && ![self.a, self.b, self.x, self.y, self.lb, self.rb, self.start].contains(&true)
+            && ![self.a, self.b, self.x, self.y, self.lb, self.rb, self.start, self.left_stick].contains(&true)
     }
 }
 
@@ -50,6 +51,7 @@ pub enum Action {
     Attack,
     Special,
     Jump,
+    ShortHop,
     Grab,
     Shield,
     LightShield,
@@ -71,6 +73,7 @@ impl Action {
             Self::Attack => 'n',
             Self::Special => 'u',
             Self::Jump => 'i',
+            Self::ShortHop => 'z',
             Self::Grab => 'o',
             Self::Shield => 'q',
             Self::LightShield => 't',
@@ -84,6 +87,25 @@ impl Action {
             Self::CRight => 'm',
             Self::CUp => 'j',
             Self::CDown => 'h',
+        }
+    }
+}
+
+#[cfg(test)]
+mod short_hop_tests {
+    use super::*;
+
+    #[test]
+    fn left_stick_click_emits_z_and_releases_on_focus_loss_spec_321() {
+        for preset in [model::PadPreset::Standard, model::PadPreset::ZJump] {
+            let mut mapper = EventMapper::new(preset);
+            mapper.resync(&Sample::default(), true);
+            let event = CapturedInput { capture_ns: 1, control: Control::Button(Button::LeftStick), value: InputValue::Button(true) };
+            let edges = mapper.apply(event, true);
+            assert_eq!(edges, vec![Transition { action: Action::ShortHop, pressed: true }]);
+            assert_eq!(edges[0].action.key(), 'z');
+            assert!(mapper.apply(event, true).is_empty());
+            assert_eq!(mapper.disarm(), vec![Transition { action: Action::ShortHop, pressed: false }]);
         }
     }
 }
@@ -217,6 +239,7 @@ impl EventMapper {
             (Control::Button(Button::Start), InputValue::Button(value)) => {
                 self.sample.start = value
             }
+            (Control::Button(Button::LeftStick), InputValue::Button(value)) => self.sample.left_stick = value,
             // Ignore future SDL controls until Smashcraft defines a mapping.
             _ => return Vec::new(),
         }
@@ -267,6 +290,7 @@ impl Mapper {
             (Action::Attack, sample.a),
             (Action::Special, sample.x),
             (Action::Jump, stick_jump || sample.y || if self.preset == model::PadPreset::ZJump { sample.rb } else { sample.b }),
+            (Action::ShortHop, sample.left_stick),
             (Action::Grab, if self.preset == model::PadPreset::ZJump { sample.b } else { sample.rb }),
             (
                 Action::Shield,
