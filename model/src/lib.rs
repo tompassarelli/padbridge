@@ -273,27 +273,31 @@ fn key(name: &str) -> Press {
     Press::Key(name.to_owned())
 }
 
-/// The fighter layout (Xbox labels), as the README's mapping table: a
-/// platform fighter's moves on fixed keys.
+/// The default fighter layout (Xbox labels), as the README's mapping table:
+/// Melee's buttons by function.
 pub fn fighter_bindings() -> Vec<Binding> {
-    fighter_bindings_for(PadPreset::Standard)
+    fighter_bindings_for(PadPreset::Melee)
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum PadPreset {
     #[default]
-    Standard,
+    Melee,
     ZJump,
+    Tom,
 }
 
 impl PadPreset {
+    pub const ALL: [Self; 3] = [Self::Melee, Self::ZJump, Self::Tom];
+
     pub fn name(self) -> &'static str {
-        match self { Self::Standard => "standard", Self::ZJump => "z-jump" }
+        match self { Self::Melee => "melee", Self::ZJump => "z-jump", Self::Tom => "tom" }
     }
 
     pub fn parse(name: &str) -> Result<Self, String> {
-        match name { "standard" => Ok(Self::Standard), "z-jump" => Ok(Self::ZJump), _ => Err(format!("unknown pad preset {name:?}: standard or z-jump")) }
+        Self::ALL.into_iter().find(|preset| preset.name() == name)
+            .ok_or_else(|| format!("unknown pad preset {name:?}: {}", Self::ALL.map(Self::name).join(", ")))
     }
 }
 
@@ -344,22 +348,72 @@ impl ControllerSettings {
     }
 }
 
+/// The pad family SDL reports (`SDL_GetGamepadType`). Controls are named by
+/// SDL position with Xbox labels; a GameCube pad's west button is B, its east
+/// button X, its right shoulder Z and its triggers L and R.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PadKind {
+    #[default]
+    Xbox,
+    GameCube,
+}
+
+impl PadKind {
+    pub fn label(self, control: Control) -> &'static str {
+        use Control::*;
+        match (self, control) {
+            (Self::GameCube, X) => "B",
+            (Self::GameCube, B) => "X",
+            (Self::GameCube, Rb) => "Z",
+            (Self::GameCube, Lt) => "L",
+            (Self::GameCube, Rt) => "R",
+            (_, A) => "A", (_, B) => "B", (_, X) => "X", (_, Y) => "Y",
+            (_, Lb) => "LB", (_, Rb) => "RB", (_, Lt) => "LT", (_, Rt) => "RT",
+            (_, LeftStick) => "L3", (_, Start) => "Start", (_, Back) => "Back",
+            (_, DpadUp) => "D-pad up", (_, DpadDown) => "D-pad down", (_, DpadLeft) => "D-pad left", (_, DpadRight) => "D-pad right",
+            (_, LeftUp) => "Left stick up", (_, LeftDown) => "Left stick down", (_, LeftLeft) => "Left stick left", (_, LeftRight) => "Left stick right",
+            (_, RightUp) => "Right stick up", (_, RightDown) => "Right stick down", (_, RightLeft) => "Right stick left", (_, RightRight) => "Right stick right",
+        }
+    }
+}
+
+/// A preset on a pad of `kind`: buttons keep their printed letters, so a
+/// GameCube pad's B (west) is special and its X (east) jumps in melee.
+pub fn pad_bindings(preset: PadPreset, triggers: TriggerShields, kind: PadKind) -> Vec<Binding> {
+    let mut bindings = fighter_bindings_with(preset, triggers);
+    if kind == PadKind::GameCube {
+        for binding in &mut bindings {
+            binding.control = match binding.control { Control::B => Control::X, Control::X => Control::B, control => control };
+        }
+    }
+    bindings
+}
+
 pub fn fighter_bindings_with(preset: PadPreset, triggers: TriggerShields) -> Vec<Binding> {
     use Control::*;
     let shield = |control, mode| match mode {
         TriggerShield::Full => bind(control, "Shield", key("q")),
         TriggerShield::Light => bind(control, "Light shield", key("t")),
     };
-    vec![
-        bind(A, "Attack", key("n")),
-        bind(X, "Special", key("u")),
-        bind(B, if preset == PadPreset::ZJump { "Grab" } else { "Jump" }, key(if preset == PadPreset::ZJump { "o" } else { "i" })),
-        bind(Y, "Jump", key("i")),
-        bind(LeftStick, "Short hop", key("z")),
-        bind(Rb, if preset == PadPreset::ZJump { "Jump" } else { "Grab" }, key(if preset == PadPreset::ZJump { "i" } else { "o" })),
-        bind(Lb, "Tilt", key("p")),
-        shield(Lt, triggers.left),
-        shield(Rt, triggers.right),
+    let (attack, special, jump, grab, short_hop, tilt) =
+        (key("n"), key("u"), key("i"), key("o"), key("z"), key("p"));
+    let buttons = match preset {
+        PadPreset::Melee => vec![
+            bind(A, "Attack", attack), bind(B, "Special", special), bind(X, "Jump", jump.clone()), bind(Y, "Jump", jump),
+            bind(Rb, "Grab", grab), shield(Lt, triggers.left), shield(Rt, triggers.right),
+        ],
+        PadPreset::ZJump => vec![
+            bind(A, "Attack", attack), bind(B, "Special", special), bind(X, "Grab", grab), bind(Y, "Jump", jump.clone()),
+            bind(Rb, "Jump", jump), shield(Lt, triggers.left), shield(Rt, triggers.right),
+        ],
+        PadPreset::Tom => vec![
+            bind(A, "Attack", attack), bind(X, "Special", special), bind(B, "Grab", grab.clone()), bind(Y, "Jump", jump.clone()),
+            bind(Lb, "Jump", jump), bind(Rb, "Grab", grab), bind(LeftStick, "Short hop", short_hop), bind(Rt, "Tilt", tilt),
+            shield(Lt, triggers.left),
+        ],
+    };
+    buttons.into_iter().chain([
         bind(Start, "Pause", key("y")),
         bind(LeftLeft, "Move left", key("w")),
         bind(LeftRight, "Move right", key("r")),
@@ -369,7 +423,7 @@ pub fn fighter_bindings_with(preset: PadPreset, triggers: TriggerShields) -> Vec
         bind(RightDown, "Down smash", key("h")),
         bind(RightLeft, "Smash left", key("b")),
         bind(RightRight, "Smash right", key("m")),
-    ]
+    ]).collect()
 }
 
 /// A map's menus driven by the pad: the left stick moves the pointer, as a
@@ -554,17 +608,25 @@ pub fn view(link: Link, s: &Snapshot) -> View {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn standard_and_z_jump_presets_keep_their_bindings() {
-        let standard = fighter_bindings();
-        let z_jump = fighter_bindings_for(PadPreset::ZJump);
-        for (standard, z_jump) in standard.iter().zip(&z_jump) {
-            match standard.control {
-                Control::B => { assert_eq!(standard.action, "Jump"); assert_eq!(z_jump.action, "Grab"); assert_eq!(z_jump.press, key("o")); }
-                Control::Rb => { assert_eq!(standard.action, "Grab"); assert_eq!(z_jump.action, "Jump"); assert_eq!(z_jump.press, key("i")); }
-                _ => assert_eq!(standard, z_jump),
-            }
+    fn presets_bind_their_buttons() {
+        let pressed = |preset, control| fighter_bindings_for(preset).into_iter().filter(|b| b.control == control).map(|b| b.action).collect::<Vec<_>>().join("+");
+        use Control::*;
+        let table = [
+            (PadPreset::Melee, [A, B, X, Y, Lb, Rb, Lt, Rt, LeftStick], ["Attack", "Special", "Jump", "Jump", "", "Grab", "Shield", "Shield", ""]),
+            (PadPreset::ZJump, [A, B, X, Y, Lb, Rb, Lt, Rt, LeftStick], ["Attack", "Special", "Grab", "Jump", "", "Jump", "Shield", "Shield", ""]),
+            (PadPreset::Tom, [A, B, X, Y, Lb, Rb, Lt, Rt, LeftStick], ["Attack", "Grab", "Special", "Jump", "Jump", "Grab", "Shield", "Tilt", "Short hop"]),
+        ];
+        for (preset, controls, actions) in table {
+            assert_eq!(controls.map(|control| pressed(preset, control)), actions.map(str::to_owned), "{}", preset.name());
+            assert_eq!(PadPreset::parse(preset.name()), Ok(preset));
         }
-        assert_eq!(z_jump.iter().find(|binding| binding.control == Control::Y).unwrap().action, "Jump");
+        assert_eq!(PadPreset::default(), PadPreset::Melee);
+        assert!(PadPreset::parse("standard").is_err());
+        let gamecube = pad_bindings(PadPreset::Melee, TriggerShields::default(), PadKind::GameCube);
+        let by_label = |label: &str| gamecube.iter().filter(|b| PadKind::GameCube.label(b.control) == label).map(|b| b.action.as_str()).collect::<Vec<_>>();
+        for (label, action) in [("A", "Attack"), ("B", "Special"), ("X", "Jump"), ("Y", "Jump"), ("Z", "Grab"), ("L", "Shield"), ("R", "Shield")] {
+            assert_eq!(by_label(label), [action], "GameCube {label}");
+        }
         assert_eq!(ClientMessage::PadPreset(PadPreset::ZJump).line(), "{\"pad_preset\":\"z-jump\"}\n");
         assert_eq!(ClientMessage::TapJump(true).line(), "{\"tap_jump\":true}\n");
     }

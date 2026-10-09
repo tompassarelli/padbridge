@@ -497,11 +497,11 @@ mod tests {
 
     #[test]
     fn a_session_on_keys_presses_the_fighter_layout() {
-        let (mut driver, mut out) = (Driver::keys(model::PadPreset::Standard), Recorded::default());
+        let (mut driver, mut out) = (Driver::keys(model::PadPreset::Tom), Recorded::default());
         let mut pad = InputView::default();
         // Arms on a neutral pad.
         driver.step(&pad, true, 0.0, &mut out).unwrap();
-        for (button, key) in [(Button::A, "n"), (Button::X, "u"), (Button::B, "i"), (Button::Rb, "o"), (Button::Lb, "p"), (Button::Start, "y"), (Button::LeftStick, "z")] {
+        for (button, key) in [(Button::A, "n"), (Button::X, "u"), (Button::B, "o"), (Button::Lb, "i"), (Button::Start, "y"), (Button::LeftStick, "z")] {
             pad.press(button, true);
             driver.step(&pad, true, 0.0, &mut out).unwrap();
             pad.press(button, false);
@@ -524,7 +524,7 @@ mod tests {
 
     #[test]
     fn analog_focus_loss_releases_marker_and_payload_and_waits_for_neutral() {
-        let (mut driver, mut out) = (Driver::keys_with_ingress(model::PadPreset::Standard, crate::pad_ingress::Route::Keys), Recorded::default());
+        let (mut driver, mut out) = (Driver::keys_with_ingress(model::PadPreset::Melee, crate::pad_ingress::Route::Keys), Recorded::default());
         driver.step(&InputView::default(), true, 0.0, &mut out).unwrap();
         let pad = InputView { left: [16384, 0], rt: 32767, ..InputView::default() };
         driver.step(&pad, true, 0.0, &mut out).unwrap();
@@ -547,21 +547,21 @@ mod tests {
 
     #[test]
     fn the_keys_mapper_and_the_shown_fighter_layout_agree() {
-        for left in [model::TriggerShield::Full, model::TriggerShield::Light] {
-            for right in [model::TriggerShield::Full, model::TriggerShield::Light] {
-                let triggers = model::TriggerShields { left, right };
-                let shown: std::collections::BTreeSet<String> = model::fighter_bindings_with(model::PadPreset::Standard, triggers).into_iter()
-                    .filter_map(|binding| match binding.press { Press::Key(key) => Some(key), _ => None }).collect();
-                let pressed: std::collections::BTreeSet<String> = [
-                    crate::Action::Attack, crate::Action::Special, crate::Action::Jump, crate::Action::ShortHop, crate::Action::Grab, crate::Action::Shield, crate::Action::LightShield, crate::Action::Walk,
-                    crate::Action::Start, crate::Action::Left, crate::Action::Right, crate::Action::Down, crate::Action::Up,
-                    crate::Action::CLeft, crate::Action::CRight, crate::Action::CUp, crate::Action::CDown,
-                ].into_iter().filter(|action| match action {
-                    crate::Action::Shield => left == model::TriggerShield::Full || right == model::TriggerShield::Full,
-                    crate::Action::LightShield => left == model::TriggerShield::Light || right == model::TriggerShield::Light,
-                    _ => true,
-                }).map(|action| match action.key() { ' ' => "space".to_owned(), key => key.to_string() }).collect();
-                assert_eq!(pressed, shown);
+        let all = [
+            crate::Action::Attack, crate::Action::Special, crate::Action::Jump, crate::Action::ShortHop, crate::Action::Grab, crate::Action::Shield, crate::Action::LightShield, crate::Action::Walk,
+            crate::Action::Start, crate::Action::Left, crate::Action::Right, crate::Action::Down, crate::Action::Up,
+            crate::Action::CLeft, crate::Action::CRight, crate::Action::CUp, crate::Action::CDown,
+        ];
+        let named: std::collections::BTreeSet<String> = all.into_iter().map(|action| match action.key() { ' ' => "space".to_owned(), key => key.to_string() }).collect();
+        for preset in model::PadPreset::ALL {
+            for left in [model::TriggerShield::Full, model::TriggerShield::Light] {
+                for right in [model::TriggerShield::Full, model::TriggerShield::Light] {
+                    let triggers = model::TriggerShields { left, right };
+                    for binding in model::fighter_bindings_with(preset, triggers) {
+                        let Press::Key(key) = binding.press else { panic!("{binding:?}") };
+                        assert!(named.contains(&key), "{} {key}", preset.name());
+                    }
+                }
             }
         }
     }

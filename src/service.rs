@@ -924,7 +924,7 @@ mod tests {
         let connected = discovery.update(Some(pad()), now);
         let game = game(1, 5);
         let target = output_target(Some(&game), connected.as_ref(), Some(any_map::Kind::Keys));
-        let mut driver = any_map::Driver::keys(model::PadPreset::Standard);
+        let mut driver = any_map::Driver::keys(model::PadPreset::Melee);
         let mut out = Recorded::default();
         let mut view = model::InputView::default();
         driver.step(&view, true, 0.0, &mut out).unwrap();

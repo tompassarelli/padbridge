@@ -172,21 +172,41 @@ A platform fighter's moves on fixed keys: the layout `wc3-controller --emit`
 presses, and the one the service presses for a plug-in session on keys
 (`model::fighter_bindings`).
 
-| Control | Action / logical key |
-| --- | --- |
-| A / X | Attack N / special U |
-| B or Y | Jump I |
-| Left stick click (L3) | Short hop Z (even held) |
-| RB / LB | Grab O / Tilt P |
-| LT / RT | Full shield Q / full shield Q |
-| Start | Y |
-| Left stick left / right / down | W / R / E |
-| Left stick up | Space (up only; no tap jump) |
-| Right stick up / right / down / left | J / M / H / B |
+Three presets choose the buttons; sticks and Start are the same in all of them.
+`wc3-controller` and plug-in helpers accept `--preset melee|z-jump|tom`, and
+`--list` prints them.
 
-The standard pad preset keeps B and Y as jump and RB as grab. Select **Z-jump**
-in a window to make RB and Y jump and B grab; the other controls stay
-the same. `wc3-controller` and plug-in helpers accept `--preset standard|z-jump`. Both triggers shield fully by default.
+| Control | melee (default) | z-jump | tom |
+| --- | --- | --- | --- |
+| A | Attack N | Attack N | Attack N |
+| B | Special U | Special U | Grab O |
+| X | Jump I | Grab O | Special U |
+| Y | Jump I | Jump I | Jump I |
+| RB | Grab O | Jump I | Grab O |
+| LB | — | — | Jump I |
+| LT | Shield Q | Shield Q | Shield Q |
+| RT | Shield Q | Shield Q | Tilt P |
+| Left stick click (L3) | — | — | Short hop Z (even held) |
+| Start | Pause Y | Pause Y | Pause Y |
+| Left stick left / right / down | W / R / E | W / R / E | W / R / E |
+| Left stick up | Space (up only; no tap jump) | Space | Space |
+| Right stick up / right / down / left | J / M / H / B | J / M / H / B | J / M / H / B |
+
+**melee** is Melee's buttons by function, with nothing advanced: no tilt
+modifier and no short-hop button. **z-jump** is the common Melee swap: Z (RB)
+jumps, which frees a face button, X, for grab. **tom** adds a tilt modifier on
+RT, a short hop on L3 and a second jump on LB. Changing one button on top of a
+preset is not supported yet.
+
+A GameCube pad (SDL reports `SDL_GAMEPAD_TYPE_GAMECUBE`, e.g. through a Wii U
+or Mayflash adapter) maps by its printed letters: in melee A attacks, B
+specials, X and Y jump, Z grabs and L and R shield. `--list` prints each pad's
+`kind`. On Windows the Wii U adapter needs the WinUSB driver installed with
+[Zadig](https://zadig.akeo.ie/), as
+[Dolphin documents](https://dolphin-emu.org/docs/guides/how-use-official-gc-controller-adapter-wii-u/).
+GameCube identity applies to the SDL helper (`wc3-controller --watch-seconds`);
+the service reads Linux evdev pads and does not apply it.
+
 Either trigger can instead light shield: choose Full shield or Light shield for
 each trigger in a window, or use `--left-trigger full|light` and
 `--right-trigger full|light`. Light shield presses T and requests
@@ -194,7 +214,7 @@ pressure 77; full shield presses Q and requests 255.
 
 Tap jump is off by default. A window can enable it, or
 `--tap-jump on|off`. When enabled,
-stick up past 0.6625 requests jump. Holding Tilt plus shield caps the effective
+stick up past 0.6625 requests jump. In the tom preset, holding Tilt plus shield caps the effective
 stick at 0.65 before tap jump, so the shield can tilt up without jumping.
 Jump buttons keep working while tilting the shield.
 
@@ -208,11 +228,11 @@ calibration is applied; the deadzone absorbs a pad's resting offset. Left,
 right and up are active when their axis is outside the deadzone; down needs
 the stronger threshold below. Right-stick directions
 use the flick thresholds below and triggers need 4000, strictly beyond. Shared sources are unioned before emission:
-releasing LT while RT is held retains shield; B and Y share one held jump
+releasing LT while RT is held retains shield; two jump buttons share one held jump
 action. Stick-up is only up: aim, up-special, getup and ledge stand. Hold
 duration remains available to the game's jump logic.
 
-Hold Tilt (LB or P) with left or right and press Special (X or U) to use
+Hold Tilt (P; RT in the tom preset) with left or right and press Special (U) to use
 neutral special facing that direction. Without Tilt, left or right selects
 side special. Up and down still select their specials while Tilt is held.
 
@@ -245,7 +265,6 @@ positions, but xpad and other Xbox-style drivers report labels: X as `BTN_X`
 (0x133, the code also named `BTN_NORTH`) and Y as `BTN_Y` (0x134, `BTN_WEST`).
 It decides by vendor exactly as SDL's Linux mapping does, so X is X on both
 paths (src/service/interface.rs, `apply_event`).
-The Xbox preset is not a claim that GameCube letter labels have the same meaning.
 
 Startup, loss of game eligibility and disconnect require all mapped controls to
 return to neutral while eligible before rearming. Only keys this output backend
