@@ -97,7 +97,7 @@ impl Action {
             Self::ShortHop => 'z',
             Self::Grab => 'o',
             Self::Shield => 'q',
-            Self::RightShield => 'v',
+            Self::RightShield => '7',
             Self::LightShield => 't',
             Self::Walk => 'p',
             Self::Meter => 'x',

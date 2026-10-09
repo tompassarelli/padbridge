@@ -186,7 +186,7 @@ Three presets choose the buttons; sticks and Start are the same in all of them.
 | RB | Grab O | Jump I | Meter X (+ Special: EX) |
 | LB | — | — | Short hop Z (even held) |
 | LT | Shield Q | Shield Q | Shield Q |
-| RT | Shield V | Shield V | Shield V |
+| RT | Shield 7 | Shield 7 | Shield 7 |
 | Start | Pause Y | Pause Y | Pause Y |
 | Left stick left / right / down | W / R / E | W / R / E | W / R / E |
 | Left stick up | Space (up only; no tap jump) | Space | Space |
@@ -232,7 +232,7 @@ the service reads Linux evdev pads and does not apply it.
 Either trigger can instead light shield: choose Full shield or Light shield for
 each trigger in a window, or use `--left-trigger full|light` and
 `--right-trigger full|light`. Light shield presses T and requests
-pressure 77; full shield presses Q on LT and V on RT and requests 255. RT has
+pressure 77; full shield presses Q on LT and 7 on RT and requests 255. RT has
 its own key so a second trigger press while the first is held still reaches
 the map as a fresh shield press (wavedash out of shield).
 

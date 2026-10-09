@@ -201,7 +201,7 @@ mod os {
             'o' => 0x1F,
             'q' => 0x0C,
             'u' => 0x20,
-            'v' => 0x09,
+            '7' => 0x1A,
             _ => panic!("no key code for {key}"),
         };
         // SAFETY: reads the HID system's key state; no pointers involved.
@@ -551,7 +551,7 @@ fn helper_types_the_layout_only_into_the_focused_game() {
         (
             "axis righttrigger 32767",
             "axis righttrigger -32768",
-            vec!["v"],
+            vec!["7"],
         ),
         ("button leftshoulder 1", "button leftshoulder 0", vec!["p"]),
         ("axis leftx -32768", "axis leftx 0", vec!["w"]),
@@ -577,9 +577,9 @@ fn helper_types_the_layout_only_into_the_focused_game() {
         h.step(second.1, &[up("i")]);
     }
     h.step("axis lefttrigger 32767", &[down("q")]);
-    h.step("axis righttrigger 32767", &[down("v")]);
+    h.step("axis righttrigger 32767", &[down("7")]);
     h.step("axis lefttrigger -32768", &[up("q")]);
-    h.step("axis righttrigger -32768", &[up("v")]);
+    h.step("axis righttrigger -32768", &[up("7")]);
 
     // Focus loss releases held keys at the OS and suppresses later presses.
     h.step("button a 1", &[down("n")]);
