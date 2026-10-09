@@ -502,7 +502,7 @@ mod tests {
         let mut pad = InputView::default();
         // Arms on a neutral pad.
         driver.step(&pad, true, 0.0, &mut out).unwrap();
-        for (button, key) in [(Button::A, "n"), (Button::X, "u"), (Button::B, "o"), (Button::Lb, "i"), (Button::Start, "y"), (Button::LeftStick, "z")] {
+        for (button, key) in [(Button::A, "n"), (Button::X, "u"), (Button::B, "o"), (Button::Y, "i"), (Button::Lb, "z"), (Button::Rb, "p"), (Button::Start, "y")] {
             pad.press(button, true);
             driver.step(&pad, true, 0.0, &mut out).unwrap();
             pad.press(button, false);

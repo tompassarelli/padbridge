@@ -117,11 +117,11 @@ mod short_hop_tests {
     use super::*;
 
     #[test]
-    fn left_stick_click_emits_z_and_releases_on_focus_loss_spec_321() {
-        for preset in [model::PadPreset::Tom] {
+    fn short_hop_button_emits_z_and_releases_on_focus_loss_spec_321() {
+        for (preset, button) in [(model::PadPreset::Tom, Button::LeftShoulder), (model::PadPreset::Script, Button::LeftStick)] {
             let mut mapper = EventMapper::new(preset);
             mapper.resync(&Sample::default(), true);
-            let event = CapturedInput { capture_ns: 1, control: Control::Button(Button::LeftStick), value: InputValue::Button(true) };
+            let event = CapturedInput { capture_ns: 1, control: Control::Button(button), value: InputValue::Button(true) };
             let edges = mapper.apply(event, true);
             assert_eq!(edges, vec![Transition { action: Action::ShortHop, pressed: true }]);
             assert_eq!(edges[0].action.key(), 'z');
@@ -412,11 +412,11 @@ mod tests {
         assert!(!tick(&mut mapper, &sample).contains(&edge(Action::Jump, true)));
         mapper.set_tap_jump(true);
         assert!(tick(&mut mapper, &sample).contains(&edge(Action::Jump, true)));
-        sample.right_trigger = 20_000;
+        sample.rb = true;
         assert!(tick(&mut mapper, &sample).contains(&edge(Action::Jump, false)));
-        sample.lb = true;
+        sample.y = true;
         assert!(tick(&mut mapper, &sample).contains(&edge(Action::Jump, true)));
-        sample.lb = false;
+        sample.y = false;
         assert!(tick(&mut mapper, &sample).contains(&edge(Action::Jump, false)));
         sample.left_trigger = 0;
         assert!(tick(&mut mapper, &sample).contains(&edge(Action::Jump, true)));
@@ -749,10 +749,9 @@ mod tests {
             let (b, x) = if kind == PadKind::GameCube { (x, b) } else { (b, x) };
             let (rb, lb) = (Sample { rb: true, ..Sample::default() }, Sample { lb: true, ..Sample::default() });
             match preset {
-                PadPreset::Melee => vec![(b, Action::Special), (x, Action::Jump), (rb, Action::Grab)],
+                PadPreset::Melee => vec![(b, Action::Special), (x, Action::Jump), (lb, Action::Walk), (rb, Action::Grab)],
                 PadPreset::ZJump => vec![(b, Action::Special), (x, Action::Grab), (rb, Action::Jump)],
-                PadPreset::Tom => vec![(b, Action::Grab), (x, Action::Special), (lb, Action::Jump), (rb, Action::Grab),
-                    (Sample { left_stick: true, ..Sample::default() }, Action::ShortHop), (Sample { right_trigger: 20_000, ..Sample::default() }, Action::Walk)],
+                PadPreset::Tom => vec![(b, Action::Grab), (x, Action::Special), (lb, Action::ShortHop), (rb, Action::Walk)],
                 PadPreset::Script => vec![(b, Action::Jump), (x, Action::Special), (lb, Action::Walk), (rb, Action::Grab),
                     (Sample { left_stick: true, ..Sample::default() }, Action::ShortHop)],
             }
@@ -768,11 +767,6 @@ mod tests {
                     for (sample, expected) in presses(preset, kind) {
                         assert_eq!(tick(&mut map, &sample), vec![edge(expected, true)], "{preset:?} {kind:?} {sample:?}");
                         assert_eq!(tick(&mut map, &Sample::default()), vec![edge(expected, false)]);
-                    }
-                    if preset == PadPreset::Tom {
-                        assert_eq!(tick(&mut map, &Sample { left_trigger: 20_000, ..Sample::default() }), vec![edge(action(left), true)]);
-                        tick(&mut map, &Sample::default());
-                        continue;
                     }
                     let mut sample = Sample { left_trigger: 20_000, ..Sample::default() };
                     assert_eq!(tick(&mut map, &sample), vec![edge(action(left), true)]);

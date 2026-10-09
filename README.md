@@ -183,20 +183,23 @@ Three presets choose the buttons; sticks and Start are the same in all of them.
 | B | Special U | Special U | Grab O |
 | X | Jump I | Grab O | Special U |
 | Y | Jump I | Jump I | Jump I |
-| RB | Grab O | Jump I | Grab O |
-| LB | — | — | Jump I |
+| RB | Grab O | Jump I | Tilt P (hold) |
+| LB | Tilt P (hold) | — | Short hop Z (even held) |
 | LT | Shield Q | Shield Q | Shield Q |
-| RT | Shield V | Shield V | Tilt P |
-| Left stick click (L3) | — | — | Short hop Z (even held) |
+| RT | Shield V | Shield V | Shield V |
 | Start | Pause Y | Pause Y | Pause Y |
 | Left stick left / right / down | W / R / E | W / R / E | W / R / E |
 | Left stick up | Space (up only; no tap jump) | Space | Space |
 | Right stick up / right / down / left | J / M / H / B | J / M / H / B | J / M / H / B |
 
-**melee** is Melee's buttons by function, with nothing advanced: no tilt
-modifier and no short-hop button. **z-jump** is the common Melee swap: Z (RB)
-jumps, which frees a face button, X, for grab. **tom** adds a tilt modifier on
-RT, a short hop on L3 and a second jump on LB.
+**melee**, the default new players get, is the GameCube layout by function:
+A attacks, B specials, X and Y jump (tap for a short hop, hold for a full
+hop), Z (RB) grabs, either trigger shields and LB holds the tilt/walk
+modifier. **z-jump** is the common Melee swap: Z (RB) jumps, which frees a face
+button, X, for grab. **tom** keeps X special and B grab, makes LB a dedicated
+short hop and Y an ordinary jump, and holds tilt on RB. In every preset a
+shield press during jump squat comes out as an air dodge on the first
+airborne frame (a wavedash).
 
 Remaps change single buttons on top of a preset, e.g. grab on LB instead of RB.
 A window sends `{"remaps":{"lb":"grab","rb":"none"}}`, which replaces the
@@ -234,7 +237,7 @@ the map as a fresh shield press (wavedash out of shield).
 
 Tap jump is off by default. A window can enable it, or
 `--tap-jump on|off`. When enabled,
-stick up past 0.6625 requests jump. In the tom preset, holding Tilt plus shield caps the effective
+stick up past 0.6625 requests jump. Holding Tilt plus shield caps the effective
 stick at 0.65 before tap jump, so the shield can tilt up without jumping.
 Jump buttons keep working while tilting the shield.
 
@@ -251,7 +254,7 @@ use the flick thresholds below and triggers need 4000, strictly beyond. Shared s
 two jump buttons share one held jump action. Stick-up is only up: aim, up-special, getup and ledge stand. Hold
 duration remains available to the game's jump logic.
 
-Hold Tilt (P; RT in the tom preset) with left or right and press Special (U) to use
+Hold Tilt (P; LB in melee, RB in tom) with left or right and press Special (U) to use
 neutral special facing that direction. Without Tilt, left or right selects
 side special. Up and down still select their specials while Tilt is held.
 

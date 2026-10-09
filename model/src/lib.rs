@@ -499,16 +499,15 @@ pub fn fighter_bindings_with(preset: PadPreset, triggers: TriggerShields) -> Vec
     let buttons = match preset {
         PadPreset::Melee => vec![
             bind(A, "Attack", attack), bind(B, "Special", special), bind(X, "Jump", jump.clone()), bind(Y, "Jump", jump),
-            bind(Rb, "Grab", grab), shield(Lt, triggers), shield(Rt, triggers),
+            bind(Lb, "Tilt", tilt), bind(Rb, "Grab", grab), shield(Lt, triggers), shield(Rt, triggers),
         ],
         PadPreset::ZJump => vec![
             bind(A, "Attack", attack), bind(B, "Special", special), bind(X, "Grab", grab), bind(Y, "Jump", jump.clone()),
             bind(Rb, "Jump", jump), shield(Lt, triggers), shield(Rt, triggers),
         ],
         PadPreset::Tom => vec![
-            bind(A, "Attack", attack), bind(X, "Special", special), bind(B, "Grab", grab.clone()), bind(Y, "Jump", jump.clone()),
-            bind(Lb, "Jump", jump), bind(Rb, "Grab", grab), bind(LeftStick, "Short hop", short_hop), bind(Rt, "Tilt", tilt),
-            shield(Lt, triggers),
+            bind(A, "Attack", attack), bind(B, "Grab", grab), bind(X, "Special", special), bind(Y, "Jump", jump),
+            bind(Lb, "Short hop", short_hop), bind(Rb, "Tilt", tilt), shield(Lt, triggers), shield(Rt, triggers),
         ],
         PadPreset::Script => vec![
             bind(A, "Attack", attack), bind(X, "Special", special), bind(B, "Jump", jump.clone()), bind(Y, "Jump", jump),
@@ -715,9 +714,9 @@ mod tests {
         let pressed = |preset, control| fighter_bindings_for(preset).into_iter().filter(|b| b.control == control).map(|b| b.action).collect::<Vec<_>>().join("+");
         use Control::*;
         let table = [
-            (PadPreset::Melee, [A, B, X, Y, Lb, Rb, Lt, Rt, LeftStick], ["Attack", "Special", "Jump", "Jump", "", "Grab", "Shield", "Shield", ""]),
+            (PadPreset::Melee, [A, B, X, Y, Lb, Rb, Lt, Rt, LeftStick], ["Attack", "Special", "Jump", "Jump", "Tilt", "Grab", "Shield", "Shield", ""]),
             (PadPreset::ZJump, [A, B, X, Y, Lb, Rb, Lt, Rt, LeftStick], ["Attack", "Special", "Grab", "Jump", "", "Jump", "Shield", "Shield", ""]),
-            (PadPreset::Tom, [A, B, X, Y, Lb, Rb, Lt, Rt, LeftStick], ["Attack", "Grab", "Special", "Jump", "Jump", "Grab", "Shield", "Tilt", "Short hop"]),
+            (PadPreset::Tom, [A, B, X, Y, Lb, Rb, Lt, Rt, LeftStick], ["Attack", "Grab", "Special", "Jump", "Short hop", "Tilt", "Shield", "Shield", ""]),
             (PadPreset::Script, [A, B, X, Y, Lb, Rb, Lt, Rt, LeftStick], ["Attack", "Jump", "Special", "Jump", "Tilt", "Grab", "Shield", "Shield", "Short hop"]),
         ];
         for (preset, controls, actions) in table {
