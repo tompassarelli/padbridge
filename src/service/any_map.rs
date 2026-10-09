@@ -410,6 +410,7 @@ pub fn spawn(window: Window, mode: Mode, feed: mpsc::Receiver<Feed>, stop: Arc<A
                 if let Some(mapper) = &mut driver.keys {
                     mapper.set_tap_jump(settings.tap_jump);
                     mapper.set_trigger_shields(settings.triggers);
+                    mapper.set_remaps(settings.remaps);
                 }
                 driver
             },

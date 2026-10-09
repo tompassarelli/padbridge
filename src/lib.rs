@@ -211,6 +211,9 @@ impl EventMapper {
     pub fn set_pad_kind(&mut self, kind: model::PadKind) {
         self.mapper.set_pad_kind(kind);
     }
+    pub fn set_remaps(&mut self, remaps: model::Remaps) {
+        self.mapper.set_remaps(remaps);
+    }
     pub fn new(preset: model::PadPreset) -> Self {
         Self { mapper: Mapper::new(preset), ..Self::default() }
     }
@@ -280,6 +283,7 @@ pub struct Mapper {
     tap_jump: bool,
     triggers: model::TriggerShields,
     kind: model::PadKind,
+    remaps: model::Remaps,
     buttons: Vec<(model::Control, Action)>,
 }
 
@@ -292,22 +296,27 @@ impl Default for Mapper {
 impl Mapper {
     pub fn set_trigger_shields(&mut self, triggers: model::TriggerShields) {
         self.triggers = triggers;
-        self.buttons = Self::buttons(self.preset, triggers, self.kind);
+        self.rebind();
     }
     pub fn set_pad_kind(&mut self, kind: model::PadKind) {
         self.kind = kind;
-        self.buttons = Self::buttons(self.preset, self.triggers, kind);
+        self.rebind();
+    }
+    pub fn set_remaps(&mut self, remaps: model::Remaps) {
+        self.remaps = remaps;
+        self.rebind();
     }
     pub fn set_tap_jump(&mut self, enabled: bool) {
         self.tap_jump = enabled;
     }
     pub fn new(preset: model::PadPreset) -> Self {
-        let (triggers, kind) = Default::default();
-        Self { held: BTreeSet::new(), armed: false, preset, tap_jump: false, triggers, kind, buttons: Self::buttons(preset, triggers, kind) }
+        let mut mapper = Self { held: BTreeSet::new(), armed: false, preset, tap_jump: false, triggers: Default::default(), kind: Default::default(), remaps: Default::default(), buttons: Vec::new() };
+        mapper.rebind();
+        mapper
     }
-    fn buttons(preset: model::PadPreset, triggers: model::TriggerShields, kind: model::PadKind) -> Vec<(model::Control, Action)> {
-        model::pad_bindings(preset, triggers, kind).iter()
-            .filter_map(|binding| Some((binding.control, Action::of_press(&binding.press)?))).collect()
+    fn rebind(&mut self) {
+        let bindings = model::remap(model::pad_bindings(self.preset, self.triggers, self.kind), &self.remaps, self.triggers);
+        self.buttons = bindings.iter().filter_map(|binding| Some((binding.control, Action::of_press(&binding.press)?))).collect();
     }
     pub fn armed(&self) -> bool {
         self.armed
@@ -703,6 +712,18 @@ mod tests {
             capture(&mut mapper, &button(4, 1, Button::North, false), 1),
             vec![edge(Action::Jump, false)]
         );
+    }
+
+    #[test]
+    fn remaps_replace_single_buttons_on_top_of_the_preset() {
+        let mut map = Mapper::new(model::PadPreset::Melee);
+        map.set_remaps(model::parse_remaps("lb=grab,rb=none,y=shield").unwrap());
+        tick(&mut map, &Sample::default());
+        let press = |map: &mut Mapper, sample: Sample| { let edges = tick(map, &sample); tick(map, &Sample::default()); edges };
+        assert_eq!(press(&mut map, Sample { lb: true, ..Sample::default() }), vec![edge(Action::Grab, true)]);
+        assert!(press(&mut map, Sample { rb: true, ..Sample::default() }).is_empty());
+        assert_eq!(press(&mut map, Sample { y: true, ..Sample::default() }), vec![edge(Action::Shield, true)]);
+        assert_eq!(press(&mut map, Sample { x: true, ..Sample::default() }), vec![edge(Action::Jump, true)]);
     }
 
     #[test]

@@ -90,7 +90,7 @@ pub enum HelperEvent {
 
 /// The helper process that serves a session: the service appends the fighter
 /// layout's settings (`--preset`, `--tap-jump`, `--left-trigger`,
-/// `--right-trigger`) and reads its standard error line by line.
+/// `--right-trigger`, and `--remaps` when any) and reads its standard error line by line.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Helper {
     pub program: PathBuf,
@@ -692,7 +692,7 @@ pub fn run(config: &Config, profile: &mut dyn Profile, stop: &AtomicBool, mut re
         if let Some(interface) = &interface {
             for message in interface.commands() {
                 match message {
-                    message @ (model::ClientMessage::TapJump(_) | model::ClientMessage::PadPreset(_) | model::ClientMessage::TriggerShields(_)) => {
+                    message @ (model::ClientMessage::TapJump(_) | model::ClientMessage::PadPreset(_) | model::ClientMessage::TriggerShields(_) | model::ClientMessage::Remaps(_)) => {
                         if settings.apply(&message) {
                             settings::save(&config.settings_file, &settings)?;
                             if let Some(current) = running.take() { stop_child(current); }
@@ -775,7 +775,7 @@ pub fn run(config: &Config, profile: &mut dyn Profile, stop: &AtomicBool, mut re
                 let (stop, focused) = (Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false)));
                 let mode = match kind {
                     any_map::Kind::Menu => any_map::Mode::Menu { start_on_keys: keys },
-                    any_map::Kind::Keys => any_map::Mode::Keys(settings),
+                    any_map::Kind::Keys => any_map::Mode::Keys(settings.clone()),
                     any_map::Kind::AnyMap => any_map::Mode::AnyMap(bindings.clone()),
                 };
                 any_map::spawn(window.clone(), mode, receive, Arc::clone(&stop), Arc::clone(&focused));
@@ -808,6 +808,9 @@ pub fn run(config: &Config, profile: &mut dyn Profile, stop: &AtomicBool, mut re
                 command.args(["--preset", settings.pad_preset.name()]);
                 command.args(["--tap-jump", if settings.tap_jump { "on" } else { "off" }]);
                 command.args(["--left-trigger", settings.triggers.left.name(), "--right-trigger", settings.triggers.right.name()]);
+                if !settings.remaps.is_empty() {
+                    command.args(["--remaps".to_owned(), model::remaps_arg(&settings.remaps)]);
+                }
                 command.env("WC3_SERVICE_PID", std::process::id().to_string());
                 if let Target::Window { niri_socket, display, .. } = &game.target {
                     command.env("NIRI_SOCKET", niri_socket).env("DISPLAY", display);
@@ -844,7 +847,7 @@ pub fn run(config: &Config, profile: &mut dyn Profile, stop: &AtomicBool, mut re
         if let Some(interface) = &interface {
             let any_map = any_map_running.as_ref().filter(|(_, _, kind, ..)| *kind == any_map::Kind::AnyMap).map(|(.., focused)| focused.load(Ordering::Relaxed));
             let mut snapshot = snapshot(&status, choice, resolved, any_map);
-            snapshot.settings = settings;
+            snapshot.settings = settings.clone();
             snapshot.map = Some(profile.title()).filter(|title| !title.is_empty()).map(str::to_owned);
             interface.status(&snapshot);
         }

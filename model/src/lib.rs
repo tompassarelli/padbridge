@@ -7,6 +7,7 @@ pub mod any_map;
 pub mod pad;
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 /// Everything the service currently knows. Sent whole on every change.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -189,6 +190,8 @@ pub enum ClientMessage {
     PadPreset(PadPreset),
     TapJump(bool),
     TriggerShields(TriggerShields),
+    /// Replaces the per-control changes on top of the pad preset.
+    Remaps(Remaps),
     /// Replaces the Any map profile's bindings.
     Bindings(Vec<Binding>),
 }
@@ -212,7 +215,7 @@ impl ClientMessage {
 }
 
 /// A physical control, with each stick direction separate.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Control {
     LeftStick,
@@ -331,25 +334,120 @@ pub struct TriggerShields {
     pub right: TriggerShield,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ControllerSettings {
     pub pad_preset: PadPreset,
     pub tap_jump: bool,
     pub triggers: TriggerShields,
+    pub remaps: Remaps,
 }
 
 impl ControllerSettings {
+    /// Applies a settings message; remaps naming a control that can't be remapped are refused whole.
     pub fn apply(&mut self, message: &ClientMessage) -> bool {
-        let before = *self;
+        let before = self.clone();
         match message {
             ClientMessage::PadPreset(preset) => self.pad_preset = *preset,
             ClientMessage::TapJump(on) => self.tap_jump = *on,
             ClientMessage::TriggerShields(triggers) => self.triggers = *triggers,
+            ClientMessage::Remaps(remaps) if remaps.keys().all(|control| REMAPPABLE.contains(control)) => self.remaps = remaps.clone(),
             _ => {}
         }
         *self != before
     }
+
+    /// The preset on a pad of `kind` with the remaps applied.
+    pub fn bindings(&self, kind: PadKind) -> Vec<Binding> {
+        remap(pad_bindings(self.pad_preset, self.triggers, kind), &self.remaps, self.triggers)
+    }
+}
+
+/// A fighter move a remapped control presses; `None` leaves the control unbound.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Move {
+    Attack,
+    Special,
+    Jump,
+    Grab,
+    Shield,
+    Tilt,
+    ShortHop,
+    None,
+}
+
+impl Move {
+    pub const ALL: [Self; 8] = [Self::Attack, Self::Special, Self::Jump, Self::Grab, Self::Shield, Self::Tilt, Self::ShortHop, Self::None];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Attack => "attack", Self::Special => "special", Self::Jump => "jump", Self::Grab => "grab",
+            Self::Shield => "shield", Self::Tilt => "tilt", Self::ShortHop => "short_hop", Self::None => "none",
+        }
+    }
+
+    pub fn parse(name: &str) -> Result<Self, String> {
+        Self::ALL.into_iter().find(|candidate| candidate.name() == name)
+            .ok_or_else(|| format!("unknown move {name:?}: {}", Self::ALL.map(Self::name).join(", ")))
+    }
+}
+
+/// Per-control changes on top of a preset, keyed by physical control (SDL position, after a GameCube pad's letter swap).
+pub type Remaps = BTreeMap<Control, Move>;
+
+/// The controls a player can remap: buttons, triggers and the left stick click.
+pub const REMAPPABLE: [Control; 9] = [Control::A, Control::B, Control::X, Control::Y, Control::Lb, Control::Rb, Control::Lt, Control::Rt, Control::LeftStick];
+
+impl Control {
+    /// The control's name in JSON and on the command line, e.g. `lb`.
+    pub fn name(self) -> String {
+        serde_json::to_value(self).ok().and_then(|value| value.as_str().map(str::to_owned)).expect("a control is a string")
+    }
+
+    pub fn parse(name: &str) -> Result<Self, String> {
+        serde_json::from_value(serde_json::Value::String(name.to_owned())).map_err(|_| format!("unknown control {name:?}"))
+    }
+}
+
+/// Remaps as a command-line value, `lb=grab,rb=none`; empty when there are none.
+pub fn remaps_arg(remaps: &Remaps) -> String {
+    remaps.iter().map(|(control, step)| format!("{}={}", control.name(), step.name())).collect::<Vec<_>>().join(",")
+}
+
+pub fn parse_remaps(text: &str) -> Result<Remaps, String> {
+    text.split(',').filter(|part| !part.is_empty()).map(|part| {
+        let (control, step) = part.split_once('=').ok_or_else(|| format!("remap {part:?} needs CONTROL=MOVE"))?;
+        let control = Control::parse(control)?;
+        if !REMAPPABLE.contains(&control) {
+            return Err(format!("{control:?} can't be remapped: {}", REMAPPABLE.map(Control::name).join(", ")));
+        }
+        Ok((control, Move::parse(step)?))
+    }).collect()
+}
+
+fn shield(control: Control, triggers: TriggerShields) -> Binding {
+    let mode = match control { Control::Lt => triggers.left, Control::Rt => triggers.right, _ => TriggerShield::Full };
+    match (control, mode) {
+        (Control::Rt, TriggerShield::Full) => bind(control, "Shield", key("v")),
+        (_, TriggerShield::Full) => bind(control, "Shield", key("q")),
+        (_, TriggerShield::Light) => bind(control, "Light shield", key("t")),
+    }
+}
+
+/// `bindings` with each remapped control's binding replaced by its move.
+pub fn remap(bindings: Vec<Binding>, remaps: &Remaps, triggers: TriggerShields) -> Vec<Binding> {
+    let kept = bindings.into_iter().filter(|binding| !remaps.contains_key(&binding.control));
+    kept.chain(remaps.iter().filter_map(|(&control, step)| Some(match step {
+        Move::Attack => bind(control, "Attack", key("n")),
+        Move::Special => bind(control, "Special", key("u")),
+        Move::Jump => bind(control, "Jump", key("i")),
+        Move::Grab => bind(control, "Grab", key("o")),
+        Move::Shield => shield(control, triggers),
+        Move::Tilt => bind(control, "Tilt", key("p")),
+        Move::ShortHop => bind(control, "Short hop", key("z")),
+        Move::None => return None,
+    }))).collect()
 }
 
 /// The pad family SDL reports (`SDL_GetGamepadType`). Controls are named by
@@ -396,31 +494,26 @@ pub fn pad_bindings(preset: PadPreset, triggers: TriggerShields, kind: PadKind) 
 
 pub fn fighter_bindings_with(preset: PadPreset, triggers: TriggerShields) -> Vec<Binding> {
     use Control::*;
-    let shield = |control, mode| match (control, mode) {
-        (Rt, TriggerShield::Full) => bind(control, "Shield", key("v")),
-        (_, TriggerShield::Full) => bind(control, "Shield", key("q")),
-        (_, TriggerShield::Light) => bind(control, "Light shield", key("t")),
-    };
     let (attack, special, jump, grab, short_hop, tilt) =
         (key("n"), key("u"), key("i"), key("o"), key("z"), key("p"));
     let buttons = match preset {
         PadPreset::Melee => vec![
             bind(A, "Attack", attack), bind(B, "Special", special), bind(X, "Jump", jump.clone()), bind(Y, "Jump", jump),
-            bind(Rb, "Grab", grab), shield(Lt, triggers.left), shield(Rt, triggers.right),
+            bind(Rb, "Grab", grab), shield(Lt, triggers), shield(Rt, triggers),
         ],
         PadPreset::ZJump => vec![
             bind(A, "Attack", attack), bind(B, "Special", special), bind(X, "Grab", grab), bind(Y, "Jump", jump.clone()),
-            bind(Rb, "Jump", jump), shield(Lt, triggers.left), shield(Rt, triggers.right),
+            bind(Rb, "Jump", jump), shield(Lt, triggers), shield(Rt, triggers),
         ],
         PadPreset::Tom => vec![
             bind(A, "Attack", attack), bind(X, "Special", special), bind(B, "Grab", grab.clone()), bind(Y, "Jump", jump.clone()),
             bind(Lb, "Jump", jump), bind(Rb, "Grab", grab), bind(LeftStick, "Short hop", short_hop), bind(Rt, "Tilt", tilt),
-            shield(Lt, triggers.left),
+            shield(Lt, triggers),
         ],
         PadPreset::Script => vec![
             bind(A, "Attack", attack), bind(X, "Special", special), bind(B, "Jump", jump.clone()), bind(Y, "Jump", jump),
             bind(LeftStick, "Short hop", short_hop), bind(Rb, "Grab", grab), bind(Lb, "Tilt", tilt),
-            shield(Lt, triggers.left), shield(Rt, triggers.right),
+            shield(Lt, triggers), shield(Rt, triggers),
         ],
     };
     buttons.into_iter().chain([
@@ -642,6 +735,26 @@ mod tests {
         assert_eq!(ClientMessage::TapJump(true).line(), "{\"tap_jump\":true}\n");
     }
     use super::*;
+
+    #[test]
+    fn remaps_change_single_controls_and_round_trip() {
+        let mut settings = ControllerSettings::default();
+        let remaps = parse_remaps("lb=grab,rt=none,x=shield").unwrap();
+        assert!(settings.apply(&ClientMessage::Remaps(remaps.clone())));
+        let actions = |control| settings.bindings(PadKind::Xbox).into_iter().filter(|b| b.control == control).map(|b| (b.action, b.press)).collect::<Vec<_>>();
+        assert_eq!(actions(Control::Lb), [("Grab".to_owned(), key("o"))]);
+        assert_eq!(actions(Control::Rt), []);
+        assert_eq!(actions(Control::X), [("Shield".to_owned(), key("q"))]);
+        assert_eq!(actions(Control::A), [("Attack".to_owned(), key("n"))]);
+        assert_eq!(remaps_arg(&settings.remaps), "x=shield,lb=grab,rt=none");
+        assert_eq!(parse_remaps(&remaps_arg(&remaps)), Ok(remaps));
+        let saved = serde_json::to_string(&settings).unwrap();
+        assert!(saved.contains("\"remaps\":{\"x\":\"shield\",\"lb\":\"grab\",\"rt\":\"none\"}"), "{saved}");
+        assert_eq!(serde_json::from_str::<ControllerSettings>(&saved).unwrap(), settings);
+        assert_eq!(serde_json::from_str::<ControllerSettings>("{\"pad_preset\":\"tom\"}").unwrap().remaps, Remaps::new());
+        assert!(!settings.apply(&ClientMessage::parse("{\"remaps\":{\"left_up\":\"jump\"}}").unwrap()));
+        assert!(parse_remaps("left_up=jump").is_err() && parse_remaps("lb").is_err() && parse_remaps("lb=dance").is_err());
+    }
 
     fn playing() -> Snapshot {
         Snapshot {

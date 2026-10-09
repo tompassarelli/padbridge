@@ -64,11 +64,12 @@ fn layout_tap_jump_and_trigger_choices_take_effect_live_and_survive_service_rest
     let selected = ControllerSettings {
         pad_preset: PadPreset::ZJump, tap_jump: true,
         triggers: TriggerShields { left: TriggerShield::Light, right: TriggerShield::Full },
+        remaps: wc3_controller::model::parse_remaps("lb=grab,rb=none").unwrap(),
     };
-    for message in [ClientMessage::PadPreset(selected.pad_preset), ClientMessage::TapJump(selected.tap_jump), ClientMessage::TriggerShields(selected.triggers)] {
+    for message in [ClientMessage::PadPreset(selected.pad_preset), ClientMessage::TapJump(selected.tap_jump), ClientMessage::TriggerShields(selected.triggers), ClientMessage::Remaps(selected.remaps.clone())] {
         stream.write_all(message.line().as_bytes()).unwrap();
     }
-    until("all three settings saved in one file", || fs::read_to_string(&path).ok()
+    until("all four settings saved in one file", || fs::read_to_string(&path).ok()
         .and_then(|text| serde_json::from_str::<ControllerSettings>(&text).ok()).filter(|saved| *saved == selected));
     assert_eq!(read(&stream), selected);
     drop(stream);

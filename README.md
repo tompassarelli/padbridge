@@ -109,7 +109,8 @@ standard input with exactly one line on its standard output:
   pointer, A left click and B right click (`model::menu_pointer_bindings`)
   until the map says otherwise.
 - The helper gets the fighter layout's settings appended (`--preset`,
-  `--tap-jump`, `--left-trigger`, `--right-trigger`), `WC3_SERVICE_PID`,
+  `--tap-jump`, `--left-trigger`, `--right-trigger`, and `--remaps` when there
+  are remaps), `WC3_SERVICE_PID`,
   and, for a window, `DISPLAY` and `NIRI_SOCKET`. The service forwards each
   line of its standard error as a `line` request. `EVENT` is `"ready"`,
   `"in_match"`, `{"focus":true|false}`, `"pad_lost"` or `"pad_back"`.
@@ -195,8 +196,19 @@ Three presets choose the buttons; sticks and Start are the same in all of them.
 **melee** is Melee's buttons by function, with nothing advanced: no tilt
 modifier and no short-hop button. **z-jump** is the common Melee swap: Z (RB)
 jumps, which frees a face button, X, for grab. **tom** adds a tilt modifier on
-RT, a short hop on L3 and a second jump on LB. Changing one button on top of a
-preset is not supported yet.
+RT, a short hop on L3 and a second jump on LB.
+
+Remaps change single buttons on top of a preset, e.g. grab on LB instead of RB.
+A window sends `{"remaps":{"lb":"grab","rb":"none"}}`, which replaces the
+previous remaps; the service saves them with the other settings in
+`~/.config/wc3-controller/settings.json` as `"remaps"`. Controls are `a`, `b`,
+`x`, `y`, `lb`, `rb`, `lt`, `rt` and `left_stick`, named by position as in
+layout files (on a GameCube pad after its letter swap: `x` is the printed B);
+moves are `attack`, `special`, `jump`, `grab`, `shield`, `tilt`, `short_hop`
+and `none` (unbound). A trigger remapped to shield keeps its full or light
+choice; shield on a button is full shield. `wc3-controller --remaps
+lb=grab,rb=none` takes the same remaps, and `model::ControllerSettings::bindings`
+gives the remapped layout a window shows.
 
 A fourth, hidden preset, `--preset script`, is the encoding of recorded pad
 scripts and their test drivers: A attack, X special, B and Y jump, RB grab, LB
@@ -422,7 +434,8 @@ object per line in the types of `model` (crate `wc3-controller-model`): the
 current `{"status":...}` on connect and on every change, `{"input":...}` for
 every change of the pad's state (read without grabbing it), and from the window
 `{"profile":"auto"|"map"|"any_map"|"off"}`, `{"bindings":[...]}`,
-`{"pad_preset":...}`, `{"tap_jump":...}` and `{"trigger_shields":...}`. `auto`
+`{"pad_preset":...}`, `{"tap_jump":...}`, `{"trigger_shields":...}` and
+`{"remaps":...}`. `auto`
 (the default) runs the map plug-in while it reports a session, and Any map
 otherwise. Any other profile stops the plug-in's helper, and the plug-in stops
 Any map. Holding the port is part of being single-instance; `--interface off`
@@ -454,7 +467,7 @@ until the pad is neutral.
 
 ### Settings
 
-The service saves the fighter layout's preset, tap jump and trigger choices in
+The service saves the fighter layout's preset, tap jump, trigger choices and remaps in
 `$XDG_CONFIG_HOME/wc3-controller/settings.json`, or
 `~/.config/wc3-controller/settings.json`, and restores them at startup; a
 connected window follows these choices instead of replacing them with its own
