@@ -678,6 +678,7 @@ dependencies = [
  "objc2-app-kit",
  "objc2-core-foundation",
  "sdl3",
+ "serde",
  "serde_json",
  "vigem-client",
  "wayland-client",

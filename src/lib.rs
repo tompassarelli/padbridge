@@ -1,10 +1,14 @@
-#![forbid(unsafe_code)]
+// Unsafe code is confined to the Windows/macOS foreground adapters in focus.rs.
+#![deny(unsafe_code)]
 
+pub mod focus;
 pub mod output;
 pub mod pad_ingress;
 pub mod stick;
 #[cfg(target_os = "linux")]
 pub mod service;
+#[cfg(target_os = "linux")]
+pub mod wlr;
 
 pub use wc3_controller_model as model;
 
@@ -240,7 +244,7 @@ impl EventMapper {
                 self.sample.start = value
             }
             (Control::Button(Button::LeftStick), InputValue::Button(value)) => self.sample.left_stick = value,
-            // Ignore future SDL controls until Smashcraft defines a mapping.
+            // Ignore future SDL controls until the fighter layout defines a mapping.
             _ => return Vec::new(),
         }
         self.mapper.update(Some(&self.sample), true)

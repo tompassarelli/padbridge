@@ -1,20 +1,134 @@
-# Warcraft controller core
+# wc3-controller
 
-UI-less Rust companion targeting Linux, Windows and macOS. SDL3 owns discovery,
-normalization and adapter protocols; enigo delivers key transitions. The default
-is **observation only**: no keyboard injection, window creation, or focus changes.
+Game controller support for any Warcraft III map. An always-on Linux service
+finds Warcraft III, the controller and the map being played by itself, and turns
+the pad into keys, clicks and pointer motion while the game has focus. Windows
+and macOS get the same controller-as-keys mapper as a foreground helper
+(`wc3-controller --emit`). SDL3 owns discovery, normalization and adapter
+protocols; enigo delivers key transitions. MIT licence (LICENSE).
+
+Two ways for a map to support a controller:
+
+- **A key layout file** (no code): the Any map profile presses the keys your
+  map already uses. Most maps need nothing else.
+- **A map plug-in** (a program): for a map with its own input protocol, menus
+  driven by a pointer, or a helper process that types into the game.
+
+Release binaries for Linux and Windows are attached to every
+[release](https://github.com/tompassarelli/wc3-controller/releases); CI
+(`.github/workflows/ci.yml`) builds them from each `v*` tag.
+
+## Add controller support to your map
+
+1. Write a layout file: a JSON list of bindings, one per control you use.
+   `examples/echo-isles/layout.json` is a complete one for an ordinary melee
+   game on Blizzard's Echo Isles (camera on the left stick, pointer on the
+   right, hero abilities on the face buttons, control groups on the triggers):
+
+   ```json
+   [
+     { "control": "a", "action": "Select", "press": "left_click" },
+     { "control": "x", "action": "Hero ability 1", "press": { "key": "q" } },
+     { "control": "lt", "action": "Army (group 1)", "press": { "key": "1" } },
+     { "control": "left_up", "action": "Camera up", "press": { "key": "up" } },
+     { "control": "right_up", "action": "Pointer", "press": "pointer" }
+   ]
+   ```
+
+   - `control`: `a`, `b`, `x`, `y`, `lb`, `rb`, `lt`, `rt`, `start`, `back`,
+     `left_stick` (click), `dpad_up|down|left|right`, and each stick direction
+     `left_up|down|left|right`, `right_up|down|left|right`. Bind each at most once.
+   - `press`: `{"key": NAME}` (a letter or digit, `space`, `escape`, `tab`,
+     `enter`, `up`, `down`, `left`, `right`, `f1`..`f24`, `insert`, `delete`,
+     `home`, `end`, `pageup`, `pagedown`), `"left_click"`, `"right_click"`, or
+     `"pointer"` (the stick moves the mouse pointer).
+   - `action`: your map's word for it; windows show it to players.
+
+   A stick direction counts outside 0.28 of full scale, a trigger beyond 4000
+   of 32767. Without a layout file the built-in one is used
+   (`model::any_map_bindings`, described under "Any map profile").
+
+2. Run the service with it:
+
+   ```sh
+   wc3-controller --service --layout examples/echo-isles/layout.json
+   ```
+
+   Open your map in Warcraft III on display `:0`: while its window has focus the
+   pad presses your keys; focus loss releases everything, and nothing presses
+   again until the pad returns to neutral. A layout naming a key the service
+   can't press is refused at startup.
+
+3. Check it without the game. `tests/layout.rs` runs the real service on this
+   layout with a virtual pad (`/dev/uinput`) and a stand-in game
+   (`--headless DOCUMENTS`), whose presses are written to `pressed.txt`; it
+   checks that X, RT, A, LB and the left stick press `q`, `2`, left click, `r`
+   and the left arrow, in order and nothing else:
+
+   ```sh
+   cargo test --locked --test layout
+   ```
+
+A window (any program) can also replace the layout live over the local
+interface with `{"bindings":[...]}` in the same format.
+
+## Map plug-ins
+
+A map plug-in tells the service when the map runs a session, what it shows
+players, and which helper process serves it. Implement
+`wc3_controller::service::Profile` in Rust and either run
+`wc3_controller::service::run` with it in your own program, or serve it as a
+separate program with `wc3_controller::service::plugin::serve` and start the
+service with `--plugin PROGRAM`. A plug-in that is missing leaves the service on
+Any map.
+
+The service runs `PROGRAM --plugin` once and talks JSON to it, one object per
+line. The program first writes its hello, then answers every request on its
+standard input with exactly one line on its standard output:
+
+| Service sends | Plug-in answers |
+| --- | --- |
+| (start) | `{"name":"hero-arena","title":"Hero Arena"}` |
+| `{"session":GAME}` (every poll, 100 ms to 1 s) | `{"session":SESSION or null,"keys":false,"pointer_menu":false}` |
+| `{"helper":{"game":GAME,"pad":PAD,"session":SESSION}}` | `{"program":"/path/helper","args":[...]}` or `null` |
+| `{"line":"text the helper wrote"}` | `{"event":EVENT or null,"problem":"sentence" or null}` |
+
+- `GAME` is `{"pid":N,"birth":TICKS,"documents":"…/Documents/Warcraft III","target":T}`,
+  where `T` is `{"window":{"display":":0","x11_window":N,"niri_window":N,"niri_socket":PATH}}`
+  or, for a stand-in game, `{"headless":{"text_out":PATH}}`. `birth` is the
+  process start time (`/proc/PID/stat` field 22): a reused PID is another game.
+  Read what your map publishes (for example Preload files in
+  `documents/CustomMapData`), and ignore files older than the game.
+- `PAD` is `{"link":"/dev/input/by-id/…","device":"/dev/input/eventN","name":"…"}`.
+- `SESSION` is `{"key":"…","summary":"…","shown":{"map":"Hero Arena","phase":P,"player":1} or null}`.
+  The helper is replaced whenever `key` changes; `summary` is for logs; `shown`
+  is what windows display, `P` one of `lobby`, `character_select`,
+  `stage_select`, `match`, `results`.
+- `keys: true` plays the session on keys: no helper; the service presses the
+  fighter layout itself. `pointer_menu: true` makes the left stick the desktop
+  pointer, A left click and B right click (`model::menu_pointer_bindings`)
+  until the map says otherwise.
+- The helper gets the fighter layout's settings appended (`--preset`,
+  `--tap-jump`, `--left-trigger`, `--right-trigger`), `WC3_SERVICE_PID`,
+  and, for a window, `DISPLAY` and `NIRI_SOCKET`. The service forwards each
+  line of its standard error as a `line` request. `EVENT` is `"ready"`,
+  `"in_match"`, `{"focus":true|false}`, `"pad_lost"` or `"pad_back"`.
+
+The service starts a helper when it has a game, a pad and a session; replaces
+it when Warcraft III restarts or its window changes, when the session key
+changes, and when the helper has been without its pad for 3 s while a pad is
+plugged in; and starts one again 2 s after a helper exits.
 
 ## Build and observe
 
-From the checkout's `smashcraft:companion` directory, use Rust 1.96.1 (pinned in
-`smashcraft:companion/rust-toolchain.toml`), a C/C++ compiler and CMake. Linux also
+From the checkout, use Rust 1.96.1 (pinned in
+`rust-toolchain.toml`), a C/C++ compiler and CMake. Linux also
 needs the libudev and libxkbcommon development libraries. Dependencies, including
 SDL 3.4.16 built statically through sdl3 0.20.0, are locked in
-`smashcraft:companion/Cargo.lock`. Build output stays in
-`smashcraft:companion/target`.
+`Cargo.lock`. Build output stays in
+`target`.
 
 ```sh
-cd ~/code/smashcraft/worktrees/controller-core-20261003/companion
 cargo test --locked --jobs 2
 cargo build --locked --jobs 2
 cargo run --locked -- --list
@@ -23,15 +137,8 @@ cargo run --locked -- --watch-seconds 20
 cargo run --locked -- --watch-seconds 20 --gamepad 1
 ```
 
-For this NixOS workstation, the observed build environment is:
-
-```sh
-nix-shell -p bun stdenv.cc cmake pkg-config libxkbcommon udev
-export PATH="$HOME/.rustup/toolchains/1.96.1-x86_64-unknown-linux-gnu/bin:$PATH"
-bun ~/.codex/skills/machine-capacity/scripts/machine-capacity.mjs run \
-  --class moderate --owner codex:controller-build --timeout-seconds 900 -- \
-  cargo build --locked --jobs 2
-```
+On NixOS, `nix-shell -p stdenv.cc cmake pkg-config libxkbcommon udev` provides
+the build environment.
 
 SDL runs on the main thread with background gamepad acquisition enabled. Logs
 include SDL event timestamps, monotonic observation times, device identity and
@@ -59,7 +166,11 @@ to rearm. This fixes event collapse in the helper. It does not prove keyboard
 delivery preserves a tap or that Warcraft's map-level polling assigns it to the
 intended simulation frame.
 
-## Xbox mapping
+## Fighter layout
+
+A platform fighter's moves on fixed keys: the layout `wc3-controller --emit`
+presses, and the one the service presses for a plug-in session on keys
+(`model::fighter_bindings`).
 
 | Control | Action / logical key |
 | --- | --- |
@@ -74,58 +185,28 @@ intended simulation frame.
 | Right stick up / right / down / left | J / M / H / B |
 
 The standard pad preset keeps B and Y as jump and RB as grab. Select **Z-jump**
-on the Controller page to make RB and Y jump and B grab; the other controls stay
-the same. Both `wc3-controller` and `wc3-journal` accept `--preset standard|z-jump`.
-The journal also accepts `WC3_PAD_PRESET`. Both triggers shield fully by default.
+in a window to make RB and Y jump and B grab; the other controls stay
+the same. `wc3-controller` and plug-in helpers accept `--preset standard|z-jump`. Both triggers shield fully by default.
 Either trigger can instead light shield: choose Full shield or Light shield for
-each trigger on the Controller page, or use `--left-trigger full|light` and
-`--right-trigger full|light` on either helper. Light shield presses T and requests
+each trigger in a window, or use `--left-trigger full|light` and
+`--right-trigger full|light`. Light shield presses T and requests
 pressure 77; full shield presses Q and requests 255.
 
-The service saves the layout, tap jump and trigger choices together in
-`$XDG_CONFIG_HOME/smashcraft/controller.json`, or `~/.config/smashcraft/controller.json`.
-It restores them at startup; a connected Controller page follows these choices
-instead of replacing them with its own defaults. `wc3-journal --service --settings FILE`
-uses another file for an isolated service.
-
-Tap jump is off by default. The Controller page can enable it, or either helper
-accepts `--tap-jump on|off` (the journal also reads `WC3_TAP_JUMP`). When enabled,
+Tap jump is off by default. A window can enable it, or
+`--tap-jump on|off`. When enabled,
 stick up past 0.6625 requests jump. Holding Tilt plus shield caps the effective
 stick at 0.65 before tap jump, so the shield can tilt up without jumping.
 Jump buttons keep working while tilting the shield.
 
-In the map's fighter, opponent settings, stage and results menus, the controller service makes
-the left stick a pointer, as the hand cursor is in Smash: it moves the desktop
-pointer over the game (the compositor's virtual pointer), A left-clicks to
-choose a tile, chip or button, B right-clicks, and Start still sends Y (stage
-selection, start). The pointer rests inside 0.12 of full deflection, speeds up
-with deflection to the power 1.7, and at full tilt crosses the game window
-in one second. It runs only while the map keeps publishing an open menu
-(CHARACTER, CPU, STAGE or RESULT, refreshed every 250 ms) and the helper reports no
-match, and stops within 100 ms of the map publishing BLOCKED for play, where
-the table above applies unchanged (smashcraft:companion/src/service/any_map.rs,
-`MenuCurve`; model::smashcraft_menu_bindings).
-
-The assigned offline client's menu check uses
-`cargo test --locked --test service a_private_pad_script -- --ignored --nocapture`.
-Set `WC3_MENU_DISPLAY`, `WC3_MENU_XID`, `WC3_MENU_PID`, `WC3_MENU_APP_ID`,
-`WC3_MENU_DATA` (CustomMapData), `WC3_MENU_WIDTH` (logical pixels), and
-`WC3_MENU_SCRIPT`, alongside that private desktop's `XDG_RUNTIME_DIR`,
-`WAYLAND_DISPLAY` and `XAUTHORITY`. The script's rows are milliseconds,
-left-stick X and Y (-32768..32767), A (0/1), and Start (0/1); `#` lines are
-comments. Start with a neutral row. Menu changes use the same driver as the
-service and match phases return to the standard fighter keys. The native
-executor checks the selected fighter and match receipt after the script.
-
-Both sticks use Melee's conversion on every pad (smashcraft:companion/src/stick.rs,
-shared by wc3-controller and wc3-journal). The stick is first clamped radially
+Both sticks use Melee's conversion on every pad (src/stick.rs, also
+public for plug-in helpers). The stick is first clamped radially
 to full scale, as Melee does at its 80-unit full scale. Each axis whose magnitude is then at most
 **0.28** of full scale reads 0; a value outside it is kept, not rescaled.
 Full scale is SDL's and the normalized evdev range, ±32767, standing in for
 Melee's 80 units, so a left-stick axis counts from 9175. No resting-offset
 calibration is applied; the deadzone absorbs a pad's resting offset. Left,
 right and up are active when their axis is outside the deadzone; down needs
-the stronger threshold below. The journal's rows carry the deadzoned axes. Right-stick directions
+the stronger threshold below. Right-stick directions
 use the flick thresholds below and triggers need 4000, strictly beyond. Shared sources are unioned before emission:
 releasing LT while RT is held retains shield; B and Y share one held jump
 action. Stick-up is only up: aim, up-special, getup and ledge stand. Hold
@@ -147,7 +228,7 @@ passes a ledge. Crouch and spot dodge trigger about three stick units early.
 Up keeps the deadzone: ledge climb 0.25 and getup 0.2 lie
 inside it, and the 0.6625 up actions (tap jump, up smash) are not served by
 digital up. Up-special (0.55) and the direction sent with a special or
-dodge press still use the deadzone, as does the journal's analog axis.
+dodge press still use the deadzone.
 
 The right stick presses a direction at Melee's smash-flick thresholds, after the
 same clamp and deadzone: **0.8** sideways and **0.6625** up or down (axis
@@ -159,11 +240,11 @@ values, so an aerial, throw or side get-up by C-stick needs a harder flick than
 in Melee. A full-scale diagonal clamps to 0.707 per axis, so it presses up or
 down but not sideways, as in Melee.
 
-On Linux the journal reads face buttons by position. Sony's driver reports
+The service reads Linux face buttons from evdev. Sony's driver reports
 positions, but xpad and other Xbox-style drivers report labels: X as `BTN_X`
 (0x133, the code also named `BTN_NORTH`) and Y as `BTN_Y` (0x134, `BTN_WEST`).
-The journal decides by vendor exactly as SDL's Linux mapping does, so X is
-special and Y jumps on both helpers; its log prints `face_labels`.
+It decides by vendor exactly as SDL's Linux mapping does, so X is X on both
+paths (src/service/interface.rs, `apply_event`).
 The Xbox preset is not a claim that GameCube letter labels have the same meaning.
 
 Startup, loss of game eligibility and disconnect require all mapped controls to
@@ -236,7 +317,7 @@ remain separate.
 ## Windows and macOS output
 
 Each OS has one foreground adapter behind the `Foreground` trait in
-`smashcraft:companion/src/focus.rs`; the mapping, rearm rules and enigo output
+`src/focus.rs`; the mapping, rearm rules and enigo output
 are shared. `--emit --watch-seconds N` needs no target arguments there:
 
 - **Windows:** the foreground window's process image must be `Warcraft III.exe`
@@ -251,9 +332,9 @@ are shared. `--emit --watch-seconds N` needs no target arguments there:
 
 `--pid PID` optionally pins one game process. `--check-focus` reports the
 eligibility without opening keyboard output. The Linux-only target arguments are
-rejected. The same foreground/submission race as on Linux applies. The journal
-binary (`wc3-journal`) remains Linux-only; on Windows and macOS the map receives
-the controller as ordinary keyboard keys with its standard QWERTY bindings.
+rejected. The same foreground/submission race as on Linux applies. The service
+and plug-ins are Linux-only; on Windows and macOS the map receives the
+controller as ordinary keyboard keys.
 
 `cargo test --locked --features e2e --test e2e -- --nocapture` runs the real
 helper in a Windows or macOS desktop session against a scripted pad (on Windows
@@ -264,15 +345,11 @@ window's whole key sequence is exactly the expected one, both
 ordered jump-button overlaps and the trigger overlap, that no key reaches either
 window while the other one is focused, that focus loss and disconnect release
 held keys in the operating system's key state, and that a control held through
-refocus must return to neutral. `smashcraft:.github/workflows/companion.yml`
-runs it on GitHub's `windows-latest` and `macos-latest` runners.
+refocus must return to neutral. `.github/workflows/ci.yml` runs it on
+GitHub's `windows-latest` runner.
 
 The SDL virtual helper also accepts `button back 0|1`, preserving View edges in
-its input history. The playable keyboard layout has no View action; journal
-View saves remain on the journal route. `bun scripts/nativeKeyboardPad.ts` in
-`ts/` replays physical pad deadlines through this helper for native draw timing
-and records independent CLOCK_MONOTONIC write brackets. Use Ctrl+H after
-capture to export the response probe.
+its input history. The fighter layout has no View action.
 
 ## Observed evidence
 
@@ -303,282 +380,75 @@ distribution must retain dependency notices and satisfy transitive licenses.
 
 ## Always-on controller service (Linux)
 
-`wc3-journal --service` takes no arguments. It finds Warcraft III on display
-`:0` (a `Warcraft III.exe` process whose `DISPLAY` is `:0`; its Wine prefix
-gives Documents/Warcraft III), the game's X11 window (`_NET_WM_PID`) and its
-niri window (unique title and class), and the controller by its stable
-`/dev/input/by-id/*-event-joystick` link, an Xbox pad first. The Smashcraft
-profile reads the newest menu publication in CustomMapData for the build,
-slot and current epoch, and the service runs one `--follow-matches` helper for
-them (`--epoch` passes the map's current epoch, so a helper started mid-session
-drives that menu). It replaces the helper when Warcraft III restarts or its
-window changes, when a newer menu publication starts a new map session (a
-lower epoch, or another build or slot), when the helper has been without its
-pad for 3 s while a pad is plugged in (a pad that came back as another
-device), and 2 s after a helper exits for any reason. A lock in
+`wc3-controller --service [--plugin PROGRAM] [--layout FILE]` finds Warcraft III
+on display `:0` (a `Warcraft III.exe` process whose `DISPLAY` is `:0`; its Wine
+prefix gives Documents/Warcraft III), the game's X11 window (`_NET_WM_PID`) and
+its niri window (unique title and class), and the controller by its stable
+`/dev/input/by-id/*-event-joystick` link, an Xbox pad first. A lock in
 `$XDG_RUNTIME_DIR` keeps one service per display; its helpers end with it.
-`~/.local/state/smashcraft/controller-service.txt` holds its current state
-(`state=serving`, `game_pid`, `session`, `helper_pid`, ...). Discovery and
-the helper's lifecycle are map-agnostic in smashcraft:companion/src/service.rs;
-map-specific knowledge is a `Profile` (smashcraft:companion/src/service/smashcraft.rs).
-Windows talk to it on TCP 127.0.0.1:47631 (smashcraft:companion/src/service/interface.rs),
-one JSON object per line in the types of smashcraft:companion/model: the current
-`{"status":...}` on connect and on every change, `{"input":...}` for every change
-of the pad's state (read without grabbing it), and from the window
-`{"profile":"auto"|"smashcraft"|"any_map"|"off"}` and `{"bindings":[...]}`.
-`auto` (the default) runs Smashcraft while this game has published a
-Smashcraft menu since it started, and Any map otherwise.
+`~/.local/state/wc3-controller/service.txt` holds its current state
+(`state=serving`, `game_pid`, `session`, `helper_pid`, ...). Discovery and the
+helper's lifecycle are map-agnostic (src/service.rs); map-specific knowledge is
+a plug-in (src/service/plugin.rs, "Map plug-ins" above).
 
-A build that reads keyboard input (the playable build, #166)
-publishes menu phases too: its ready file `CustomMapData/wc3-melee-ready.txt` names
-the build and `INPUT keyboard-d2-r24` (the development build uses `INPUT callback`). Newer than the game's start and any different build's menu,
-it is a Smashcraft session on keys (`session=BUILD/keys/N`): the service
-runs no helper, uses the pointer in fighter, stage and results menus, and presses the pad's keys during matches through the same mapper as
-`--emit` (the table above: A n, X u, B/Y i, RB o, LB p, either trigger q,
-Start y, left stick w/r/e/space, right stick b/m/j/h), into the game's window
-while niri focuses it. Focus loss releases them, and nothing presses again
-until the pad is neutral. The status reads `state=serving` once that output runs.
+Windows talk to it on TCP 127.0.0.1:47631 (src/service/interface.rs), one JSON
+object per line in the types of `model` (crate `wc3-controller-model`): the
+current `{"status":...}` on connect and on every change, `{"input":...}` for
+every change of the pad's state (read without grabbing it), and from the window
+`{"profile":"auto"|"map"|"any_map"|"off"}`, `{"bindings":[...]}`,
+`{"pad_preset":...}`, `{"tap_jump":...}` and `{"trigger_shields":...}`. `auto`
+(the default) runs the map plug-in while it reports a session, and Any map
+otherwise. Any other profile stops the plug-in's helper, and the plug-in stops
+Any map. Holding the port is part of being single-instance; `--interface off`
+opens none. `--display`, `--pads`, `--status`, `--settings` and
+`--headless DOCUMENTS` (a stand-in game whose `game` file names it; a helper
+types into `typed.txt` and pad output goes to `pressed.txt`) serve tests.
 
-The Any map profile (smashcraft:companion/src/service/any_map.rs) plays any
-map, melee included: `model::any_map_bindings()` puts the camera arrows on the
-left stick, the pointer on the right stick, left and right click on A and B,
-Q/W/E/R on X, Y, RT and LT, control groups 1 and 2 on the bumpers, 3 and 4 on
-D-pad up and right, F1 (hero) and Tab on D-pad down and left, F10 on Start and
-Escape on Back. Keys, clicks and pointer motion go through XTEST on the game's
-display only while niri's focused window is the game's; losing focus releases
-everything, and nothing presses again until the pad is neutral. Any other
-profile stops the Smashcraft helper, and Smashcraft stops Any map. Holding
-the port is part of being single-instance; `--interface off` opens none.
-`--display`, `--pads`, `--status` and `--headless DOCUMENTS` (a stand-in game
-whose `game` file names it; the helper types into `typed.txt`) serve tests.
-smashcraft:companion/tests/service.rs drives a fake session through a new map
-session and a game restart with a virtual pad.
+A login unit runs it, for example with systemd:
 
-## Experimental Linux original-frame journal
-
-`wc3-journal` is a separate Linux evdev acquisition executable. It uses kernel
-CLOCK_MONOTONIC event timestamps rather than SDL's clock conversion, retains
-per-frame edges/analog state, and atomically publishes immutable I4 preload
-files for the production journal input source. Build it with the same pinned
-environment above using `cargo build --locked --jobs 2 --bin wc3-journal`.
-
-For the editbox map, start one helper **in character selection** and
-leave it running through results and rematches:
-
-```sh
-~/code/smashcraft/worktrees/playable-integration-20261005/companion/target/debug/wc3-journal \
-  --follow-matches --build BUILD --slot 0 \
-  --device /dev/input/eventN --out '/absolute/Warcraft III/CustomMapData' \
-  --editbox-display :N --x11-window DECIMAL_ID --pid PID \
-  --niri-window WINDOW_ID --trace
+```ini
+[Service]
+ExecStart=%h/.local/share/wc3-controller/bin/wc3-controller --service --plugin %h/path/to/your-plugin
+Restart=always
 ```
 
-Select the exact device, build, slot and focus target. The Linux Xbox axis set
-is required. The helper opens the device and tracks its physical state before
-announcing readiness. It accepts only new complete readiness publications after
-it starts (or the preceding match ends), and only increasing within-map epochs.
-Old map-session receipts are not adopted. In character selection, left-stick
-left/right cycles the character, A selects the current character, X recalls
-your selection, and Start opens stage selection once everyone has selected.
-In stage selection, left/right changes the stage, X returns to characters,
-and A or Start begins the match. At results, A or Start confirms your rematch.
-Up/down visits fighter cards and CPU Opponent settings. In that panel,
-left/right changes the focused value, up/down visits Opponent, Difficulty and
-Done, A advances or chooses Done, X goes back, and Start closes without starting
-a match. One stick deflection or button press produces one menu action; release before
-the next action. The controller service starts the helper with `--menu-keys
-start`: then only Start reaches the outer menus, and the service's menu pointer
-does the rest, including in the CPU opponent settings panel. Held controls require neutral after startup, a menu phase
-change, focus loss, and entering gameplay.
+Install it from a tag with
+`cargo install --locked --git https://github.com/tompassarelli/wc3-controller --tag vX.Y.Z --root ~/.local/share/wc3-controller wc3-controller`.
 
-The map publishes `smashcraft-journal-menu-BUILD-sSLOT.txt`, containing
-`SMASHCRAFT JOURNAL MENU v=1 build=BUILD epoch=EPOCH slot=SLOT phase=PHASE` in
-a complete native preload file. PHASE is CHARACTER, CPU, STAGE, RESULT or BLOCKED.
-Eligible menus refresh every 15 map ticks (normally 250 ms); the helper requires
-a matching publication newer than its startup/previous match and no older than
-one second. Initial character selection uses epoch 0. Results become eligible
-only after all helpers have stopped and the text box has closed. BLOCKED,
-missing, partial or stale receipts suppress menu actions.
+### Any map profile
 
-Each accepted menu action uses the existing exact-window Enigo text boundary
-to send a finite W/R/Space/E/N/U/Y press-release pair. It holds no menu keys, rechecks
-map permission and game focus per tap, and never activates a window. The map's
-journal menus give those keys fixed menu meanings independent of combat key
-rebindings and mouse position. This covers ordinary fighter/stage/result menus;
-mouse-only slot modes, settings, chat and other Warcraft screens are outside it.
+`model::any_map_bindings()` puts the camera arrows on the left stick, the
+pointer on the right stick, left and right click on A and B, Q/W/E/R on X, Y,
+RT and LT, control groups 1 and 2 on the bumpers, 3 and 4 on D-pad up and
+right, F1 (hero) and Tab on D-pad down and left, F10 on Start and Escape on
+Back. A layout file or a window's bindings replace it. Keys, clicks and pointer
+motion go through XTEST on the game's display only while niri's focused window
+is the game's; losing focus releases everything, and nothing presses again
+until the pad is neutral.
 
-Every human helper announces readiness through the ordered text ingress. The
-map synchronizes those announcements before publishing local START. Capture
-uses that complete file's stable modification timestamp, converted to the local
-monotonic clock with measured uncertainty, just as resume does. START/END files
-older than the accepted readiness publication are ignored. A delayed or partial
-START read retains original input events; the helper never substitutes its read
-time for the publication boundary. This defines a **local publication grid**;
-it does not align clocks between machines or remove their inter-client offset.
+### Settings
 
-At results, the map publishes END. The helper stops generating capture rows,
-discards unfinished terminal rows, drains already queued old-epoch records, and
-sends an ordered final marker. The map consumes those terminal records without
-combat and flushes the final marker receipt. The helper observes that receipt
-and publishes its fixed local quiescence acknowledgment; only then does the map
-close the editbox. The helper clears an earlier acknowledgment before announcing
-readiness, so it cannot satisfy a new match. Results controls unlock after every human helper has stopped. The same process
-then follows the next fresh epoch with neutral rearming and empty match queues.
-This supports within-map rematches; automatic map reload remains unsupported.
-Logs identify `waiting_for_match`, `match_ready`, `match_start`, `match_end`, and
-`match_quiescent`, with the epoch and startup timestamp uncertainty.
+The service saves the fighter layout's preset, tap jump and trigger choices in
+`$XDG_CONFIG_HOME/wc3-controller/settings.json`, or
+`~/.config/wc3-controller/settings.json`, and restores them at startup; a
+connected window follows these choices instead of replacing them with its own
+defaults. `--settings FILE` uses another file for an isolated service.
 
-On controller removal, the journal retains earlier captured input and emits a
-neutral release at the first unassigned frame at detection. It continues neutral
-rows while disconnected. Reconnect discovery reads kernel identity files and
-opens only a unique match for the selected Linux input ID, name, physical path
-and unique name, then rechecks the opened device. At least one physical/unique
-discriminator is required; missing or ambiguous identity never selects another
-pad. Changing USB ports can change the physical path. Controls held on return
-must become neutral before new gameplay, menu or pause inputs are accepted.
-`controller_disconnected` records detection; `controller_release frame=N`
-records its assigned release; `controller_reconnected source=...` identifies
-the recovered event path. Bounded native recovery is recorded in
-smashcraft:evidence/controller-reconnect-native-20261005/README.md.
+## Status model
 
-Each record the helper types is an envelope of about 30 characters around
-its payload, and it types at most 16 records past what the map's receipt says
-it consumed. Warcraft takes typed text into the edit box at a cost that grows
-with how much it takes at once: in 0.0.48's native bot session, the 16 records
-(608 characters) typed after a 2 s stop held the client about 180 ms, and its
-input stayed 15–25 frames late for 5 s
-(smashcraft:evidence/bot-session-0048-native-20261006/). So the helper types
-at most 160 characters past the record the receipt says arrived. While a
-row packet waits untyped, consecutive packets from the same epoch combine
-using the existing `I5` message encoding, up to 64 frames and only while the
-whole envelope stays within those 160 characters. Holds keep buttons, axes
-and triggers; every press, release and other edge retains its original frame.
-Already typed packets and control records stay separate. The native #86
-capture's 28 neutral frames used 155 characters as joined `I4` packets;
-the same frames use 37 characters in one `I5` envelope.
-The map writes a dirty text receipt every two ticks (at most 30 per client
-per second), so the smaller window can drain promptly. The typing cost
-model bounds 160 characters at 12.8 ms; native receipt-write cost remains
-a separate check.
+`model/` (crate `wc3-controller-model`, re-exported as `wc3_controller::model`)
+holds what the controller service knows (pad, game, map session, active
+profile, the plug-in's map title, whether presses reach the game), the
+newline-delimited JSON messages on its local interface, the plain-language rows
+and status light a window shows, the built-in binding tables, and the Any map
+profile's mapper (keys, clicks and pointer from configurable bindings). It has
+no I/O and builds without SDL, so windows depend on it alone:
 
-For Wisp's headless clients, `--text-out FILE` replaces `--editbox-display`
-and the focus arguments: every text the helper would type into the game's
-window (journal envelopes and menu keys) is appended to FILE as one line, and
-`--out` names the folder the headless client writes its files to. There is
-no window, so focus never suspends output; chat's Return key needs a game
-window and stops the helper. `bun wisp integrity headless` starts it this way
-(smashcraft:docs/typescript.md).
+```toml
+wc3-controller-model = { git = "https://github.com/tompassarelli/wc3-controller", tag = "vX.Y.Z" }
+```
 
-The explicit `--ready-file PATH --epoch-monotonic-ns NS` mode remains for native
-diagnostic drivers. `--first-frame N` (default 1) and `--stop-frame N` belong to
-that mode; it also accepts explicit build/epoch/slot/delay arguments. Its supplied
-clock is a diagnostic assumption, never a cross-machine timing guarantee. A
-diagnostic producer's first I4 row may announce readiness to the map.
-
-Pause prepares each helper's input frontier, synchronizes the highest frontier
-across humans, and commits the shared stop frame. Resume opens a new local
-capture segment at the stable publication timestamp, retaining original tags.
-Enter in the active controller receiver requests that same shared pause before
-opening native chat. The helper drains all retained records through their
-consumed receipts, then publishes its chat quiescence symbol. Only then does
-the map hide and release the receiver and the helper press Return. Controller
-actions remain suppressed until native chat closes and the map restores its
-receiver. Closing chat leaves the match paused; neutral controls and a fresh
-Start press resume it. No player can resume while another player is typing.
-
-At match admission, the helper removes that epoch and slot's old end and chat
-acknowledgements before announcing readiness. A new game reuses epoch and chat
-request numbers, so these files must not satisfy a new handshake or collide
-with its immutable publication. Other builds, epochs and slots are preserved.
-
-The existing text receipt exposes `chat` (a within-epoch request number),
-`chatState` (0 receiver restored, 1 draining, 2 focus released, 3 native chat
-observed visible), and `chatFrame` (whether `ChatEditBar` was found). State 0
-with the same nonzero request number follows observed native closure and
-receiver restoration. Helper logs report `chat_state`, `chat_quiescent`, and
-`chat_return`. Native acceptance must establish editbox Enter delivery,
-`ChatEditBar` visibility, and the injected Return opening actual chat; source
-tests alone do not establish those engine behaviors.
-
-The helper waits for the native writer's closing line before parsing controls.
-Native timing and graphical acceptance are distinct from the focused source
-tests. This path remains Linux-only and separate from the digital keyboard mapper.
-On kernel SYN_DROPPED or an event for an already-published frame, acquisition
-stops with a diagnostic instead of inventing input or moving its original frame.
-
-Current evidence and remaining acceptance are in
-`roadmap #16`. The Linux journal path passed bounded tap/stall,
-focus and pause/resume trials. Automatic start/results/rematch with the same
-helpers passed two native match lifecycles; keyboard confirmed the menus.
-See `smashcraft:evidence/match-lifecycle-native-20261005/README.md` for exact builds,
-failed attempts and limits. Physical controller-to-screen timing, cross-machine
-clock agreement, chat, physical reconnect and other-platform acceptance remain open.
-
-### Journal keyboard focus boundary
-
-Keyboard ingress (`--editbox-display` or `--mailbox-display`) additionally
-requires `--x11-window DECIMAL_ID`, `--pid PID`, and exactly one foreground
-adapter: `--niri-window ID` or `--private-wlr-app-id ID`. The latter uses the
-selected private desktop's `XDG_RUNTIME_DIR` and `WAYLAND_DISPLAY`. These are
-the same process/window/compositor checks used by the mapper, implemented in
-smashcraft:companion/src/focus.rs and smashcraft:companion/src/wlr.rs. Missing or
-failed target identity is an error; ordinary focus loss suspends keyboard output.
-
-Focus loss leaves assigned rows and queued I4/ACK1/JP1 records in order. A logical
-neutral release is assigned after any already-assigned open row; subsequent
-unfocused input is explicitly suppressed. The 60 Hz capture segment continues,
-so neutral rows retain the elapsed original frame numbers. Focus away for less
-than 200 ms is a blip: input stays armed and held, and only typing waits for
-focus. Focus checks have reported such blips of a few milliseconds during
-play; each loss logs `focus_away` with what held focus instead (the Niri focused
-window's id, app ID and PID, or the X11 active, focus and pointer windows), and
-`focus_back` with its duration. A loss of 200 ms or more releases as above. On return, queued
-records resume without retargeting, while fresh gameplay requires all mapped
-controls (including Start) to become neutral. A held-through-return stick or
-button cannot reactivate by itself. Start remains usable during game pause after
-focus rearming; gameplay separately requires neutral after pause.
-
-The queue permits at most 120 records and 2048 bytes including delimiters,
-roughly four seconds of ordinary two-frame records (less for larger records or
-control traffic). Exceeding either bound stops with an explicit error; records
-are not overwritten. This is bounded focus recovery, not indefinite background
-capture. Trace output distinguishes `game-eligible`, `focus_release`,
-`input_armed`, `gameplay_armed`, suppressed kernel events and actual emissions.
-
-Eligibility is sampled before queue capture and each keyboard API emission;
-it is not an atomic compositor/keyboard transaction or a history of OS focus at
-every kernel event timestamp. Already assigned rows are retained; unassigned
-items observed while ineligible or before the recovery boundary are suppressed
-and logged. Map-internal chat/editbox focus is a separate acceptance boundary.
-No game activation or focus change is performed by the helper. The editbox path
-uses Enigo's X11 `text_to_window`, including directed modifier events, so a
-focus switch cannot route its text to another application's window. This does
-not guarantee Warcraft consumes those events: the native focus trial retained
-zero sink events but exposed a missing-frame gap on return. Native acknowledgment
-and replay remain required before claiming focus-safe delivery; see
-smashcraft:evidence/native-focus-20261005/README.md.
-
-The editbox path holds no global transport keys; the legacy mailbox retains its existing signal state
-until eligible and gates its cleanup too, so unfocused teardown does not emit
-key releases to a different application.
-
-## Status model and the Any map profile
-
-smashcraft:companion/model (crate `wc3-controller-model`, re-exported as
-`wc3_controller::model`) holds what the controller service knows (pad, game,
-map session, active profile, whether presses reach the game), the
-newline-delimited JSON messages on its local interface (`{"status":...}`,
-`{"input":...}` from the service; `{"profile":"auto"|"smashcraft"|"any_map"|"off"}`
-and `{"bindings":[...]}` to it), the plain-language rows and status light a
-window shows, both profiles' binding tables, and the Any map profile's mapper
-(keys, clicks and pointer from configurable bindings). It has no I/O and builds
-without SDL, so windows such as smashcraft:client depend on it alone.
-smashcraft:companion is a self-contained Cargo workspace (`cargo test --workspace`)
-so it can move to its own repository; consumers then switch their path
-dependency on `wc3-controller-model` to a git one.
-
-
-## Analog comparison candidates (#204)
+## Analog comparison candidates
 
 The production default stays digital until the native comparison chooses a
 channel. The Linux service can opt into either candidate with

@@ -1,0 +1,144 @@
+[
+  {
+    "control": "a",
+    "action": "Select",
+    "press": "left_click"
+  },
+  {
+    "control": "b",
+    "action": "Move / attack",
+    "press": "right_click"
+  },
+  {
+    "control": "x",
+    "action": "Hero ability 1",
+    "press": {
+      "key": "q"
+    }
+  },
+  {
+    "control": "y",
+    "action": "Hero ability 2",
+    "press": {
+      "key": "w"
+    }
+  },
+  {
+    "control": "rb",
+    "action": "Hero ability 3",
+    "press": {
+      "key": "e"
+    }
+  },
+  {
+    "control": "lb",
+    "action": "Ultimate",
+    "press": {
+      "key": "r"
+    }
+  },
+  {
+    "control": "lt",
+    "action": "Army (group 1)",
+    "press": {
+      "key": "1"
+    }
+  },
+  {
+    "control": "rt",
+    "action": "Workers (group 2)",
+    "press": {
+      "key": "2"
+    }
+  },
+  {
+    "control": "dpad_up",
+    "action": "Select hero",
+    "press": {
+      "key": "f1"
+    }
+  },
+  {
+    "control": "dpad_down",
+    "action": "Build menu",
+    "press": {
+      "key": "b"
+    }
+  },
+  {
+    "control": "dpad_left",
+    "action": "Next unit in group",
+    "press": {
+      "key": "tab"
+    }
+  },
+  {
+    "control": "dpad_right",
+    "action": "Attack move",
+    "press": {
+      "key": "a"
+    }
+  },
+  {
+    "control": "start",
+    "action": "Game menu",
+    "press": {
+      "key": "f10"
+    }
+  },
+  {
+    "control": "back",
+    "action": "Cancel",
+    "press": {
+      "key": "escape"
+    }
+  },
+  {
+    "control": "left_up",
+    "action": "Camera up",
+    "press": {
+      "key": "up"
+    }
+  },
+  {
+    "control": "left_down",
+    "action": "Camera down",
+    "press": {
+      "key": "down"
+    }
+  },
+  {
+    "control": "left_left",
+    "action": "Camera left",
+    "press": {
+      "key": "left"
+    }
+  },
+  {
+    "control": "left_right",
+    "action": "Camera right",
+    "press": {
+      "key": "right"
+    }
+  },
+  {
+    "control": "right_up",
+    "action": "Pointer",
+    "press": "pointer"
+  },
+  {
+    "control": "right_down",
+    "action": "Pointer",
+    "press": "pointer"
+  },
+  {
+    "control": "right_left",
+    "action": "Pointer",
+    "press": "pointer"
+  },
+  {
+    "control": "right_right",
+    "action": "Pointer",
+    "press": "pointer"
+  }
+]

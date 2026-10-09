@@ -3,16 +3,18 @@
 //! serving them, replacing it when any of them changes.
 //!
 //! Game, window and pad discovery are map-agnostic. What a map asks of the
-//! helper, and the helper's command line, belong to a [`Profile`];
-//! [`smashcraft::Smashcraft`] is the Smashcraft one.
+//! helper, and the helper's command line, belong to a [`Profile`]: a map
+//! plug-in, in this process or another one ([`plugin`]). Without one the
+//! service plays every map with the Any map profile ([`NoMap`]).
 
 pub mod any_map;
 pub mod interface;
+pub mod plugin;
 pub mod pointer;
-pub mod smashcraft;
 pub mod settings;
 
 use crate::model;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
     fs,
@@ -34,7 +36,8 @@ use x11rb::{
 };
 
 /// Where the helper delivers what it types.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Target {
     /// Warcraft III's window on an X11 display, under niri.
     Window { display: String, x11_window: u32, niri_window: u64, niri_socket: PathBuf },
@@ -43,7 +46,7 @@ pub enum Target {
 }
 
 /// One running Warcraft III and its window.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Game {
     pub pid: u32,
     /// The process start time in clock ticks: a reused PID is another game.
@@ -54,7 +57,7 @@ pub struct Game {
 }
 
 /// The controller, found by its stable link or event node.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Pad {
     pub link: PathBuf,
     /// The event node the link points at now.
@@ -63,18 +66,19 @@ pub struct Pad {
 }
 
 /// What the map currently asks of the helper.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Session {
     /// The helper is replaced when this changes.
     pub key: String,
-    /// For people, as in "Smashcraft playable-0047, player 1, fighter selection".
+    /// For people, as in "Hero Arena 1.2, player 1, hero selection".
     pub summary: String,
     /// What a window shows of it.
     pub shown: Option<model::Session>,
 }
 
 /// What a helper's log line says about it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum HelperEvent {
     /// Waiting for a match, menus driven by the controller.
     Ready,
@@ -84,21 +88,65 @@ pub enum HelperEvent {
     PadBack,
 }
 
-/// Map-specific knowledge: the session the map publishes and the helper that serves it.
+/// The helper process that serves a session: the service appends the fighter
+/// layout's settings (`--preset`, `--tap-jump`, `--left-trigger`,
+/// `--right-trigger`) and reads its standard error line by line.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Helper {
+    pub program: PathBuf,
+    pub args: Vec<String>,
+}
+
+/// What one helper log line means.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Line {
+    pub event: Option<HelperEvent>,
+    /// A sentence for the player: why the helper stopped.
+    pub problem: Option<String>,
+}
+
+/// A map plug-in: the session the map publishes and the helper that serves it.
+/// Implement it in Rust and run it in this process, or behind
+/// [`plugin::serve`] as a separate program (README, "Map plug-ins").
 pub trait Profile {
+    /// A short machine name, e.g. `hero-arena`.
     fn name(&self) -> &str;
+    /// The map's name as players know it; empty for no map.
+    fn title(&self) -> &str;
     /// The map's current session in this game, if it runs one.
     fn session(&mut self, game: &Game) -> Option<Session>;
-    /// The helper's arguments for this game, pad and session.
-    fn args(&self, game: &Game, pad: &Pad, session: &Session) -> Vec<String>;
-    fn event(&self, line: &str) -> Option<HelperEvent>;
+    /// The helper for this game, pad and session; `None` when the session needs none.
+    fn helper(&mut self, game: &Game, pad: &Pad, session: &Session) -> Option<Helper>;
+    /// What a line the helper wrote means.
+    fn line(&mut self, _line: &str) -> Line {
+        Line::default()
+    }
     /// Whether the map shows a menu the pad drives with the desktop pointer now.
-    fn pointer_menu(&self) -> bool {
+    fn pointer_menu(&mut self) -> bool {
         false
     }
-    /// Whether the session plays on keys: no helper; the service presses the pad's keys itself.
-    fn keys(&self) -> bool {
+    /// Whether the session plays on keys: no helper; the service presses the fighter layout itself.
+    fn keys(&mut self) -> bool {
         false
+    }
+}
+
+/// No map plug-in: every map plays with the Any map profile.
+pub struct NoMap;
+
+impl Profile for NoMap {
+    fn name(&self) -> &str {
+        "none"
+    }
+    fn title(&self) -> &str {
+        ""
+    }
+    fn session(&mut self, _game: &Game) -> Option<Session> {
+        None
+    }
+    fn helper(&mut self, _game: &Game, _pad: &Pad, _session: &Session) -> Option<Helper> {
+        None
     }
 }
 
@@ -459,8 +507,6 @@ pub struct Config {
     pub display: String,
     /// Where the pads' stable links are.
     pub pads: PathBuf,
-    /// The helper executable.
-    pub helper: PathBuf,
     /// Rewritten on every change; absent writes none.
     pub status_file: Option<PathBuf>,
     pub poll: Duration,
@@ -469,6 +515,8 @@ pub struct Config {
     pub headless: Option<PathBuf>,
     /// The local interface's address (interface::ADDRESS); absent opens none.
     pub interface: Option<String>,
+    /// The Any map profile's bindings until a window sends others; absent is the built-in layout.
+    pub layout: Option<Vec<model::Binding>>,
 }
 
 impl Default for Config {
@@ -478,11 +526,11 @@ impl Default for Config {
             settings_file: settings::default_path(),
             display: ":0".into(),
             pads: "/dev/input/by-id".into(),
-            helper: std::env::current_exe().unwrap_or_else(|_| "wc3-journal".into()),
-            status_file: Some(home.join(".local/state/smashcraft/controller-service.txt")),
+            status_file: Some(home.join(".local/state/wc3-controller/service.txt")),
             poll: Duration::from_millis(250),
             headless: None,
             interface: Some(interface::ADDRESS.into()),
+            layout: None,
         }
     }
 }
@@ -508,7 +556,10 @@ fn stop_child(running: Running) {
 fn output_target(game: Option<&Game>, pad: Option<&Pad>, kind: Option<any_map::Kind>) -> Option<(any_map::Window, u32, any_map::Kind)> {
     match (game, pad, kind) {
         (Some(Game { pid, target: Target::Window { display, niri_window, niri_socket, .. }, .. }), Some(_), Some(kind)) => {
-            Some((any_map::Window { display: display.clone(), niri_socket: niri_socket.clone(), niri_window: *niri_window }, *pid, kind))
+            Some((any_map::Window::Niri { display: display.clone(), niri_socket: niri_socket.clone(), niri_window: *niri_window }, *pid, kind))
+        }
+        (Some(Game { pid, target: Target::Headless { text_out }, .. }), Some(_), Some(kind)) => {
+            Some((any_map::Window::File(text_out.with_file_name("pressed.txt")), *pid, kind))
         }
         _ => None,
     }
@@ -540,7 +591,7 @@ pub fn run(config: &Config, profile: &mut dyn Profile, stop: &AtomicBool, mut re
     }
     let mut choice = model::ProfileChoice::Auto;
     let mut settings = settings::load(&config.settings_file)?;
-    let mut bindings = any_map::default_bindings();
+    let mut bindings = config.layout.clone().unwrap_or_else(any_map::default_bindings);
     // The running Any map output's feed; the pad watcher sends every state to it.
     let feed: Arc<Mutex<Option<mpsc::Sender<any_map::Feed>>>> = Arc::new(Mutex::new(None));
     let mut any_map_running: Option<(any_map::Window, u32, any_map::Kind, Arc<AtomicBool>, Arc<AtomicBool>)> = None;
@@ -569,13 +620,17 @@ pub fn run(config: &Config, profile: &mut dyn Profile, stop: &AtomicBool, mut re
         report(status);
         *written = text;
     };
-    eprintln!("service: profile={} display={} pads={} helper={}", profile.name(), config.display, config.pads.display(), config.helper.display());
+    eprintln!("service: profile={} display={} pads={}", profile.name(), config.display, config.pads.display());
     while !stop.load(Ordering::Relaxed) {
         let now = Instant::now();
         if let Some(current) = &mut running {
             while let Ok(line) = current.lines.try_recv() {
                 eprintln!("helper: {line}");
-                if let (Some(event), Some(helper)) = (profile.event(&line), status.helper.as_mut()) {
+                let meaning = profile.line(&line);
+                if meaning.problem.is_some() {
+                    status.problem = meaning.problem;
+                }
+                if let (Some(event), Some(helper)) = (meaning.event, status.helper.as_mut()) {
                     match event {
                         HelperEvent::Ready => { helper.ready = true; helper.in_match = false; }
                         HelperEvent::InMatch => helper.in_match = true,
@@ -590,8 +645,8 @@ pub fn run(config: &Config, profile: &mut dyn Profile, stop: &AtomicBool, mut re
                 // Drain what it said last.
                 while let Ok(line) = current.lines.recv_timeout(Duration::from_millis(50)) {
                     eprintln!("helper: {line}");
-                    if line.starts_with("wc3-journal: ") {
-                        status.problem = Some(line.trim_start_matches("wc3-journal: ").to_owned());
+                    if let Some(problem) = profile.line(&line).problem {
+                        status.problem = Some(problem);
                     }
                 }
                 eprintln!("service: helper exited ({exit})");
@@ -692,10 +747,10 @@ pub fn run(config: &Config, profile: &mut dyn Profile, stop: &AtomicBool, mut re
         }
         let resolved = choice.resolve(session.is_some());
         // Another profile than this one presses nothing through its helper.
-        let session = if resolved == model::Profile::Smashcraft { session } else { None };
+        let session = if resolved == model::Profile::Map { session } else { None };
         // A session on keys needs no helper: the pad's keys output serves it.
-        let keys = resolved == model::Profile::Smashcraft && session.is_some() && profile.keys();
-        if resolved != model::Profile::Smashcraft || keys {
+        let keys = resolved == model::Profile::Map && session.is_some() && profile.keys();
+        if resolved != model::Profile::Map || keys {
             if let Some(current) = running.take() {
                 eprintln!("service: stopping the helper: {}", if keys { "the session plays on keys".to_owned() } else { format!("profile {resolved:?}") });
                 stop_child(current);
@@ -705,7 +760,7 @@ pub fn run(config: &Config, profile: &mut dyn Profile, stop: &AtomicBool, mut re
         }
         // Pad output into the game's window while it has focus: the Any map
         // profile, or the pointer in the map's menus (never during play).
-        let menu = resolved == model::Profile::Smashcraft && profile.pointer_menu()
+        let menu = resolved == model::Profile::Map && profile.pointer_menu()
             && status.helper.as_ref().is_none_or(|helper| !helper.in_match);
         let kind = if menu { Some(any_map::Kind::Menu) } else if keys { Some(any_map::Kind::Keys) } else if resolved == model::Profile::AnyMap { Some(any_map::Kind::AnyMap) } else { None };
         let want = output_target(game.as_ref(), pad.as_ref(), kind);
@@ -746,9 +801,10 @@ pub fn run(config: &Config, profile: &mut dyn Profile, stop: &AtomicBool, mut re
             }
             Decision::Start => {
                 let (game, pad, session) = (game.as_ref().unwrap(), pad.as_ref().unwrap(), session.as_ref().unwrap());
-                let args = profile.args(game, pad, session);
-                let mut command = Command::new(&config.helper);
-                command.args(&args).stdin(Stdio::null()).stderr(Stdio::piped());
+                let helper = profile.helper(game, pad, session).unwrap_or_else(|| Helper { program: PathBuf::new(), args: Vec::new() });
+                let args = &helper.args;
+                let mut command = Command::new(&helper.program);
+                command.args(args).stdin(Stdio::null()).stderr(Stdio::piped());
                 command.args(["--preset", settings.pad_preset.name()]);
                 command.args(["--tap-jump", if settings.tap_jump { "on" } else { "off" }]);
                 command.args(["--left-trigger", settings.triggers.left.name(), "--right-trigger", settings.triggers.right.name()]);
@@ -756,7 +812,7 @@ pub fn run(config: &Config, profile: &mut dyn Profile, stop: &AtomicBool, mut re
                 if let Target::Window { niri_socket, display, .. } = &game.target {
                     command.env("NIRI_SOCKET", niri_socket).env("DISPLAY", display);
                 }
-                match command.spawn() {
+                match if helper.program.as_os_str().is_empty() { Err(std::io::Error::other("the map plug-in names none")) } else { command.spawn() } {
                     Ok(mut child) => {
                         let (send, lines) = mpsc::channel();
                         let stderr = child.stderr.take().expect("piped helper stderr");
@@ -774,7 +830,7 @@ pub fn run(config: &Config, profile: &mut dyn Profile, stop: &AtomicBool, mut re
                         running = Some(Running { child, lines });
                     }
                     Err(error) => {
-                        status.problem = Some(format!("couldn't start the helper {}: {error}", config.helper.display()));
+                        status.problem = Some(format!("couldn't start the helper {}: {error}", helper.program.display()));
                         supervisor.stopped(now);
                     }
                 }
@@ -789,6 +845,7 @@ pub fn run(config: &Config, profile: &mut dyn Profile, stop: &AtomicBool, mut re
             let any_map = any_map_running.as_ref().filter(|(_, _, kind, ..)| *kind == any_map::Kind::AnyMap).map(|(.., focused)| focused.load(Ordering::Relaxed));
             let mut snapshot = snapshot(&status, choice, resolved, any_map);
             snapshot.settings = settings;
+            snapshot.map = Some(profile.title()).filter(|title| !title.is_empty()).map(str::to_owned);
             interface.status(&snapshot);
         }
         // Without a game, looking once a second is enough and costs little.
@@ -822,6 +879,7 @@ pub fn snapshot(status: &Status, choice: model::ProfileChoice, profile: model::P
         session: status.session.as_ref().and_then(|session| session.shown.clone()),
         profile,
         choice,
+        map: None,
         output: if let Some(focused) = any_map { model::Output { running: true, ready: true, focused } } else { model::Output {
             running: status.helper.is_some(),
             ready: status.helper.as_ref().is_some_and(|helper| helper.ready),

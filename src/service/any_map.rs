@@ -1,6 +1,6 @@
 //! Pad-driven desktop output: the Any map profile (the pad's state through
 //! [`model::any_map::Mapper`] into keys, clicks and pointer motion) and the
-//! Smashcraft menu pointer (the left stick moves the pointer with a Smash-like
+//! menu pointer for a map plug-in's menus (the left stick moves the pointer with a Smash-like
 //! curve, A and B click). Output happens only while Warcraft III's window has
 //! focus; losing focus releases everything held, and nothing is pressed again
 //! until the pad returns to neutral. Keys go through XTEST on the game's X11
@@ -13,6 +13,7 @@ use crate::model::{
 };
 use serde_json::Value;
 use std::{
+    fs,
     io::{BufRead, BufReader, Write},
     os::unix::net::UnixStream,
     path::{Path, PathBuf},
@@ -71,9 +72,9 @@ impl MenuCurve {
     }
 }
 
-/// Journal sessions send Start through their helper; keyboard sessions send it here.
+/// Sessions with a helper send Start through it; sessions on keys send it here.
 pub fn menu_bindings(start_on_keys: bool) -> Vec<Binding> {
-    model::smashcraft_menu_bindings().into_iter()
+    model::menu_pointer_bindings().into_iter()
         .filter(|binding| matches!(binding.press, model::Press::LeftClick | model::Press::RightClick)
             || (start_on_keys && binding.control == model::Control::Start))
         .collect()
@@ -84,7 +85,7 @@ pub struct Driver {
     mapper: Mapper,
     focused: bool,
     menu: Option<MenuCurve>,
-    /// Smashcraft on keys: this mapper replaces the bindings' one.
+    /// The fighter layout on keys: this mapper replaces the bindings' one.
     keys: Option<crate::Mapper>,
     analog: crate::pad_ingress::Ingress,
 }
@@ -99,7 +100,7 @@ impl Driver {
         Self { mapper: Mapper::new(menu_bindings(start_on_keys)), focused: false, menu: Some(curve), keys: None, analog: crate::pad_ingress::Ingress::new(crate::pad_ingress::Route::Digital) }
     }
 
-    /// Smashcraft on keys. Focus loss releases every key, and nothing presses
+    /// The fighter layout on keys. Focus loss releases every key, and nothing presses
     /// again until the pad returns to neutral while focused.
     pub fn keys(preset: model::PadPreset) -> Self {
         Self::keys_with_ingress(preset, crate::pad_ingress::Route::Digital)
@@ -291,11 +292,11 @@ pub fn niri_focused(socket: &Path, window: u64) -> bool {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Mode {
     AnyMap(Vec<Binding>),
-    /// Smashcraft's menus: pointer and clicks only.
+    /// The map plug-in's menus: pointer and clicks only.
     Menu { start_on_keys: bool },
-    /// Smashcraft played on keys: the controller-as-keys mapper of
-    /// `wc3-controller --emit` ([`crate::Mapper`]), whose keys are the map's
-    /// standard key layout (README, "Xbox mapping").
+    /// A map session on keys: the controller-as-keys mapper of
+    /// `wc3-controller --emit` ([`crate::Mapper`]), the fighter layout
+    /// (README, "Fighter layout").
     Keys(model::ControllerSettings),
 }
 
@@ -312,7 +313,7 @@ impl Kind {
         match self {
             Kind::AnyMap => "Any map",
             Kind::Menu => "menu pointer",
-            Kind::Keys => "Smashcraft keys",
+            Kind::Keys => "fighter keys",
         }
     }
 }
@@ -347,10 +348,27 @@ pub enum Feed {
 
 /// The game window the output serves.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Window {
-    pub display: String,
-    pub niri_socket: PathBuf,
-    pub niri_window: u64,
+pub enum Window {
+    /// Warcraft III's window: presses go to its X11 display while niri focuses it.
+    Niri { display: String, niri_socket: PathBuf, niri_window: u64 },
+    /// A stand-in game with no window, always focused: each press is appended
+    /// to this file as a line (`down q`, `up q`, `click left down`, `pointer DX DY`).
+    File(PathBuf),
+}
+
+/// Presses written as lines, for a stand-in game.
+struct FileOutput(fs::File);
+
+impl Output for FileOutput {
+    fn key(&mut self, name: &str, down: bool) -> Result<(), String> {
+        writeln!(self.0, "{} {name}", if down { "down" } else { "up" }).map_err(|error| error.to_string())
+    }
+    fn click(&mut self, right: bool, down: bool) -> Result<(), String> {
+        writeln!(self.0, "click {} {}", if right { "right" } else { "left" }, if down { "down" } else { "up" }).map_err(|error| error.to_string())
+    }
+    fn pointer(&mut self, dx: f64, dy: f64) -> Result<(), String> {
+        writeln!(self.0, "pointer {dx:.0} {dy:.0}").map_err(|error| error.to_string())
+    }
 }
 
 /// How often the pointer moves while a stick holds it, and focus is checked.
@@ -361,17 +379,26 @@ const FOCUS_EVERY: Duration = Duration::from_millis(50);
 /// it holds at the end; `focused` mirrors the game window's focus.
 pub fn spawn(window: Window, mode: Mode, feed: mpsc::Receiver<Feed>, stop: Arc<AtomicBool>, focused: Arc<AtomicBool>) -> thread::JoinHandle<()> {
     thread::spawn(move || {
-        let mut out = match DesktopOutput::new(&window.display) {
+        let opened: Result<Box<dyn Output>, String> = match &window {
+            Window::Niri { display, .. } => DesktopOutput::new(display).map(|out| Box::new(out) as Box<dyn Output>),
+            Window::File(path) => fs::OpenOptions::new().create(true).append(true).open(path)
+                .map(|file| Box::new(FileOutput(file)) as Box<dyn Output>).map_err(|error| format!("{}: {error}", path.display())),
+        };
+        let mut out = match opened {
             Ok(out) => out,
             Err(error) => {
-                eprintln!("service: pad output on {} failed: {error}", window.display);
+                eprintln!("service: pad output failed: {error}");
                 return;
             }
         };
+        let out = out.as_mut();
         let mut driver = match mode {
             Mode::AnyMap(bindings) => Driver::new(bindings),
             Mode::Menu { start_on_keys } => {
-                let width = niri_window_width(&window.niri_socket, window.niri_window).unwrap_or(2560.0);
+                let width = match &window {
+                    Window::Niri { niri_socket, niri_window, .. } => niri_window_width(niri_socket, *niri_window).unwrap_or(2560.0),
+                    Window::File(_) => 2560.0,
+                };
                 Driver::menu(MenuCurve::for_window_width(width), start_on_keys)
             }
             Mode::Keys(settings) => {
@@ -400,7 +427,10 @@ pub fn spawn(window: Window, mode: Mode, feed: mpsc::Receiver<Feed>, stop: Arc<A
                 }
                 fresh.extend(feed.try_iter());
                 if checked.elapsed() >= FOCUS_EVERY {
-                    let now = niri_focused(&window.niri_socket, window.niri_window);
+                    let now = match &window {
+                        Window::Niri { niri_socket, niri_window, .. } => niri_focused(niri_socket, *niri_window),
+                        Window::File(_) => true,
+                    };
                     if now != is_focused {
                         eprintln!("service: pad output {}", if now { "focused" } else { "unfocused: released" });
                     }
@@ -413,21 +443,21 @@ pub fn spawn(window: Window, mode: Mode, feed: mpsc::Receiver<Feed>, stop: Arc<A
                     match item {
                         Feed::Input(view) => {
                             input = view;
-                            driver.step(&input, is_focused, 0.0, &mut out)?;
+                            driver.step(&input, is_focused, 0.0, out)?;
                         }
-                        Feed::Bindings(bindings) => driver.bind(bindings, &mut out)?,
+                        Feed::Bindings(bindings) => driver.bind(bindings, out)?,
                     }
                 }
                 let seconds = moved.elapsed().as_secs_f32();
                 moved = Instant::now();
-                driver.step(&input, is_focused, seconds, &mut out)?;
+                driver.step(&input, is_focused, seconds, out)?;
             }
             Ok(())
         })();
         if let Err(error) = result {
             eprintln!("service: pad output stopped: {error}");
         }
-        let _ = driver.release(&mut out);
+        let _ = driver.release(out);
         focused.store(false, Ordering::Relaxed);
     })
 }
@@ -466,7 +496,7 @@ mod tests {
     }
 
     #[test]
-    fn smashcraft_on_keys_presses_the_maps_standard_layout() {
+    fn a_session_on_keys_presses_the_fighter_layout() {
         let (mut driver, mut out) = (Driver::keys(model::PadPreset::Standard), Recorded::default());
         let mut pad = InputView::default();
         // Arms on a neutral pad.
@@ -516,11 +546,11 @@ mod tests {
     }
 
     #[test]
-    fn the_keys_mapper_and_the_shown_smashcraft_layout_agree() {
+    fn the_keys_mapper_and_the_shown_fighter_layout_agree() {
         for left in [model::TriggerShield::Full, model::TriggerShield::Light] {
             for right in [model::TriggerShield::Full, model::TriggerShield::Light] {
                 let triggers = model::TriggerShields { left, right };
-                let shown: std::collections::BTreeSet<String> = model::smashcraft_bindings_with(model::PadPreset::Standard, triggers).into_iter()
+                let shown: std::collections::BTreeSet<String> = model::fighter_bindings_with(model::PadPreset::Standard, triggers).into_iter()
                     .filter_map(|binding| match binding.press { Press::Key(key) => Some(key), _ => None }).collect();
                 let pressed: std::collections::BTreeSet<String> = [
                     crate::Action::Attack, crate::Action::Special, crate::Action::Jump, crate::Action::ShortHop, crate::Action::Grab, crate::Action::Shield, crate::Action::LightShield, crate::Action::Walk,
@@ -599,7 +629,7 @@ mod tests {
     }
 
     #[test]
-    fn in_smashcraft_menus_the_left_stick_moves_the_pointer_by_deflection_and_a_clicks() {
+    fn in_map_menus_the_left_stick_moves_the_pointer_by_deflection_and_a_clicks() {
         let curve = MenuCurve::for_window_width(2560.0);
         let (mut driver, mut out) = (Driver::menu(curve, false), Recorded::default());
         let mut pad = InputView::default();
@@ -632,7 +662,7 @@ mod tests {
         pad.left = [32767, 0];
         driver.step(&pad, false, 0.1, &mut out).unwrap();
         assert_eq!(take(&mut out), ["up right-click"]);
-        // A keyboard build keeps its Start mapping without a journal helper.
+        // A session on keys keeps its Start mapping without a helper.
         let mut driver = Driver::menu(curve, true);
         let mut pad = InputView::default();
         driver.step(&pad, true, 0.0, &mut out).unwrap();

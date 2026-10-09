@@ -2,7 +2,7 @@
 //! OS), one JSON object per line, in the types of [`crate::model`]. A window
 //! that connects gets the current `{"status":...}` at once and then every
 //! change, and `{"input":...}` for every change of the pad's state. It may send
-//! `{"profile":"auto"|"smashcraft"|"any_map"|"off"}` and `{"bindings":[...]}`.
+//! `{"profile":"auto"|"map"|"any_map"|"off"}` and `{"bindings":[...]}`.
 //! Binding the port is also what makes the service single-instance.
 
 use crate::model::{Button, ClientMessage, InputView, ServiceMessage, Snapshot};
@@ -97,7 +97,7 @@ impl Interface {
 
 /// Folds one kernel event into the pad's displayed state. Axis ranges map to
 /// SDL's; `positional` pads (Sony) report face buttons by position, Xbox-style
-/// drivers by label (smashcraft:companion/README.md, "Xbox mapping").
+/// drivers by label (README.md, "Fighter layout").
 pub fn apply_event(view: &mut InputView, ranges: &[(i32, i32); 0x12], positional: bool, kind: u16, code: u16, value: i32) {
     const KEY: u16 = 1;
     const ABS: u16 = 3;
@@ -194,7 +194,7 @@ mod tests {
         let interface = Interface::listen("127.0.0.1:0").unwrap();
         // A second service on the same address is refused.
         assert!(Interface::listen(&interface.address.to_string()).is_err());
-        let first = Snapshot { profile: Profile::Smashcraft, ..Snapshot::default() };
+        let first = Snapshot { profile: Profile::Map, ..Snapshot::default() };
         interface.status(&first);
         let stream = TcpStream::connect(interface.address).unwrap();
         let mut lines = BufReader::new(stream.try_clone().unwrap()).lines();

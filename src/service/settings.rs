@@ -5,7 +5,7 @@ pub fn default_path() -> PathBuf {
     let config = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).unwrap_or_else(|| {
         PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".config")
     });
-    config.join("smashcraft/controller.json")
+    config.join("wc3-controller/settings.json")
 }
 
 pub fn load(path: &Path) -> Result<ControllerSettings, String> {

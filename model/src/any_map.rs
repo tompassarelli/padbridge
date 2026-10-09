@@ -6,7 +6,7 @@
 use crate::{Binding, Button, Control, InputView, Press};
 use std::collections::BTreeSet;
 
-/// A stick axis counts outside 0.28 of full scale, as the Smashcraft layout's sticks do.
+/// A stick axis counts outside 0.28 of full scale, as the fighter layout's sticks do.
 pub const STICK_DEADZONE: i16 = 9175;
 /// A trigger counts when pulled strictly beyond this.
 pub const TRIGGER_THRESHOLD: u16 = 4000;

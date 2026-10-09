@@ -1,6 +1,6 @@
 //! Windows/macOS end-to-end check of the real helper (`--features e2e`, needs a
 //! desktop session). A scripted pad drives wc3-controller, which must type the
-//! #18 layout only into a focused stand-in whose executable is named like
+//! fighter layout only into a focused stand-in whose executable is named like
 //! Warcraft III. Stand-ins record what their windows receive; the operating
 //! system's key state shows whether the helper released what it pressed, since
 //! SDL hides key-ups in a window that lost focus or never saw the press.
@@ -233,7 +233,7 @@ mod pad {
     use super::Process;
 
     pub const HELPER_ARGS: &[&str] = &["--virtual-pad"];
-    pub const NAME: &str = "Smashcraft virtual pad";
+    pub const NAME: &str = "wc3-controller virtual pad";
 
     /// The helper's stdin drives its in-process SDL virtual gamepad.
     pub struct Pad;
@@ -528,7 +528,7 @@ fn helper_types_the_layout_only_into_the_focused_game() {
         h.report()
     );
 
-    // #18 layout: A attack, X special, B/Y jump, RB grab, either trigger
+    // Fighter layout: A attack, X special, B/Y jump, RB grab, either trigger
     // shield, LB walk, stick directions (stick-up is only up), Start pause,
     // and the right stick's four C-stick directions.
     for (press, release, keys) in [

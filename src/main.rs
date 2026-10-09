@@ -1,10 +1,6 @@
-// Unsafe code is confined to the Windows/macOS foreground adapters in focus.rs.
-#![deny(unsafe_code)]
-mod focus;
-#[cfg(target_os = "linux")]
-mod wlr;
+#![forbid(unsafe_code)]
 
-use focus::Foreground;
+use wc3_controller::focus::{self, Foreground};
 use sdl3::{
     JoystickSubsystem,
     event::Event,
@@ -127,7 +123,7 @@ struct VirtualPad {
 impl VirtualPad {
     fn attach(joysticks: &JoystickSubsystem) -> Result<Self, String> {
         let desc = VirtualJoystickDescription::new()
-            .name("Smashcraft virtual pad")
+            .name("wc3-controller virtual pad")
             .joystick_type(JoystickType::Gamepad)
             .with_buttons(VIRTUAL_BUTTONS)
             .with_axes(VIRTUAL_AXES);
@@ -729,7 +725,66 @@ fn run() -> Result<(), String> {
     Ok(())
 }
 
+/// `wc3-controller --service`: the always-on controller service (README, "Always-on controller service").
+#[cfg(target_os = "linux")]
+fn service() -> Result<(), String> {
+    use wc3_controller::service::{self, Config, NoMap, Profile, plugin::Plugin};
+    let mut config = Config::default();
+    let mut plugin = None;
+    let mut args = std::env::args().skip(2);
+    while let Some(arg) = args.next() {
+        let mut value = || args.next().ok_or_else(|| format!("missing value for {arg}"));
+        match arg.as_str() {
+            "--plugin" => plugin = Some(std::path::PathBuf::from(value()?)),
+            "--layout" => {
+                let path = value()?;
+                let text = std::fs::read_to_string(&path).map_err(|error| format!("read the layout {path}: {error}"))?;
+                let layout: Vec<wc3_controller::model::Binding> = serde_json::from_str(&text).map_err(|error| format!("the layout {path}: {error}"))?;
+                if let Some(binding) = layout.iter().find(|binding| matches!(&binding.press, wc3_controller::model::Press::Key(key) if service::any_map::key_of(key).is_none())) {
+                    return Err(format!("the layout {path}: {:?} names no key this service can press", binding.press));
+                }
+                config.layout = Some(layout);
+            }
+            "--display" => config.display = value()?,
+            "--pads" => config.pads = value()?.into(),
+            "--status" => config.status_file = Some(value()?.into()),
+            "--settings" => config.settings_file = value()?.into(),
+            "--headless" => config.headless = Some(value()?.into()),
+            "--interface" => config.interface = Some(value()?).filter(|address| address != "off"),
+            "--poll-ms" => config.poll = Duration::from_millis(value()?.parse().map_err(|_| "invalid --poll-ms")?),
+            _ => return Err(format!("unexpected argument {arg:?}\n{SERVICE_HELP}")),
+        }
+    }
+    let mut profile: Box<dyn Profile> = match plugin {
+        // A missing plug-in leaves every map on Any map rather than no controller at all.
+        Some(program) if program.exists() => Box::new(Plugin::spawn(&program)?),
+        Some(program) => {
+            eprintln!("service: no map plug-in at {}; Any map only", program.display());
+            Box::new(NoMap)
+        }
+        None => Box::new(NoMap),
+    };
+    let stop = Arc::new(AtomicBool::new(false));
+    let signal = Arc::clone(&stop);
+    ctrlc::set_handler(move || signal.store(true, Ordering::Relaxed)).map_err(|error| format!("install interrupt handler: {error}"))?;
+    service::run(&config, profile.as_mut(), &stop, |_| {})
+}
+
+#[cfg(target_os = "linux")]
+const SERVICE_HELP: &str = "wc3-controller --service [--plugin PROGRAM] [--layout FILE] [--display :0] [--pads DIR] [--status FILE] [--settings FILE] [--headless DOCUMENTS] [--interface ADDRESS|off] [--poll-ms N]";
+
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some("--service") {
+        #[cfg(target_os = "linux")]
+        let result = service();
+        #[cfg(not(target_os = "linux"))]
+        let result: Result<(), String> = Err("the service runs on Linux; elsewhere use --emit".into());
+        if let Err(error) = result {
+            eprintln!("wc3-controller --service: {error}");
+            std::process::exit(1);
+        }
+        return;
+    }
     if let Err(error) = run() {
         eprintln!("wc3-controller: {error}");
         std::process::exit(1);

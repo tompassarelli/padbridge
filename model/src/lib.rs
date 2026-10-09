@@ -1,6 +1,6 @@
 //! What the controller service knows, the messages on its local interface, and
-//! the plain-language status a window shows for it. Map-agnostic except for the
-//! profiles' binding tables. No I/O: the service and every window share it.
+//! the plain-language status a window shows for it, and the built-in binding
+//! tables. No I/O: the service and every window share it.
 #![forbid(unsafe_code)]
 
 pub mod any_map;
@@ -19,8 +19,11 @@ pub struct Snapshot {
     pub session: Option<Session>,
     /// The profile running now.
     pub profile: Profile,
-    /// What the player chose; `Auto` runs Smashcraft during a Smashcraft session, else Any map.
+    /// What the player chose; `Auto` runs the map plug-in during its session, else Any map.
     pub choice: ProfileChoice,
+    /// The map plug-in's title as players know it, e.g. "Hero Arena"; `None` without a plug-in.
+    #[serde(default)]
+    pub map: Option<String>,
     pub output: Output,
     /// One plain-language sentence for the player, when something needs them.
     pub problem: Option<String>,
@@ -44,7 +47,7 @@ pub struct Game {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Session {
-    /// The map's name as players know it, e.g. "Smashcraft".
+    /// The map's name as players know it, e.g. "Hero Arena".
     pub map: String,
     pub phase: Phase,
     /// Player number as the game shows it (1-based), when known.
@@ -75,9 +78,9 @@ pub struct Output {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Profile {
-    /// Smashcraft's own input protocol and menu control.
+    /// The map plug-in's session: its helper, keys and menu pointer.
     #[default]
-    Smashcraft,
+    Map,
     /// Buttons and sticks to configurable keys and mouse, for any map.
     AnyMap,
     /// Follow the pad and the game, press nothing.
@@ -85,11 +88,11 @@ pub enum Profile {
 }
 
 impl Profile {
-    pub const ALL: [Profile; 3] = [Profile::Smashcraft, Profile::AnyMap, Profile::Off];
+    pub const ALL: [Profile; 3] = [Profile::Map, Profile::AnyMap, Profile::Off];
 
     pub fn label(self) -> &'static str {
         match self {
-            Profile::Smashcraft => "Smashcraft",
+            Profile::Map => "Map plug-in",
             Profile::AnyMap => "Any map",
             Profile::Off => "Off",
         }
@@ -102,18 +105,18 @@ impl Profile {
 pub enum ProfileChoice {
     #[default]
     Auto,
-    Smashcraft,
+    Map,
     AnyMap,
     Off,
 }
 
 impl ProfileChoice {
-    /// The profile this choice runs, given whether a Smashcraft session is followed.
-    pub fn resolve(self, smashcraft_session: bool) -> Profile {
+    /// The profile this choice runs, given whether the map plug-in follows a session.
+    pub fn resolve(self, map_session: bool) -> Profile {
         match self {
-            ProfileChoice::Auto if smashcraft_session => Profile::Smashcraft,
+            ProfileChoice::Auto if map_session => Profile::Map,
             ProfileChoice::Auto => Profile::AnyMap,
-            ProfileChoice::Smashcraft => Profile::Smashcraft,
+            ProfileChoice::Map => Profile::Map,
             ProfileChoice::AnyMap => Profile::AnyMap,
             ProfileChoice::Off => Profile::Off,
         }
@@ -270,9 +273,10 @@ fn key(name: &str) -> Press {
     Press::Key(name.to_owned())
 }
 
-/// Smashcraft's fixed layout (Xbox labels), as the README's mapping table.
-pub fn smashcraft_bindings() -> Vec<Binding> {
-    smashcraft_bindings_for(PadPreset::Standard)
+/// The fighter layout (Xbox labels), as the README's mapping table: a
+/// platform fighter's moves on fixed keys.
+pub fn fighter_bindings() -> Vec<Binding> {
+    fighter_bindings_for(PadPreset::Standard)
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -293,8 +297,8 @@ impl PadPreset {
     }
 }
 
-pub fn smashcraft_bindings_for(preset: PadPreset) -> Vec<Binding> {
-    smashcraft_bindings_with(preset, TriggerShields::default())
+pub fn fighter_bindings_for(preset: PadPreset) -> Vec<Binding> {
+    fighter_bindings_with(preset, TriggerShields::default())
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -340,7 +344,7 @@ impl ControllerSettings {
     }
 }
 
-pub fn smashcraft_bindings_with(preset: PadPreset, triggers: TriggerShields) -> Vec<Binding> {
+pub fn fighter_bindings_with(preset: PadPreset, triggers: TriggerShields) -> Vec<Binding> {
     use Control::*;
     let shield = |control, mode| match mode {
         TriggerShield::Full => bind(control, "Shield", key("q")),
@@ -368,9 +372,9 @@ pub fn smashcraft_bindings_with(preset: PadPreset, triggers: TriggerShields) -> 
     ]
 }
 
-/// Smashcraft's fighter, stage and results menus: the left stick moves the
-/// pointer, as a hand cursor does in Smash, and the face buttons click.
-pub fn smashcraft_menu_bindings() -> Vec<Binding> {
+/// A map's menus driven by the pad: the left stick moves the pointer, as a
+/// hand cursor does in Smash, and the face buttons click.
+pub fn menu_pointer_bindings() -> Vec<Binding> {
     use Control::*;
     vec![
         bind(LeftUp, "Move the pointer", Press::Pointer),
@@ -475,7 +479,7 @@ fn phase_text(session: &Session) -> String {
 
 fn session_row(s: &Snapshot) -> Row {
     let label = match s.profile {
-        Profile::Smashcraft => "Smashcraft",
+        Profile::Map => s.map.as_deref().unwrap_or("Map"),
         Profile::AnyMap => "Map",
         Profile::Off => "Controller output",
     };
@@ -486,8 +490,8 @@ fn session_row(s: &Snapshot) -> Row {
         return row(label, "Waiting for Warcraft III", Light::Amber);
     }
     let (doing, followed) = match (s.profile, &s.session) {
-        (Profile::Smashcraft, None) => return row(label, "Waiting for Smashcraft", Light::Amber),
-        (Profile::Smashcraft, Some(session)) => (phase_text(session), true),
+        (Profile::Map, None) => return row(label, format!("Waiting for {}", s.map.as_deref().unwrap_or("the map")), Light::Amber),
+        (Profile::Map, Some(session)) => (phase_text(session), true),
         _ => ("Your controller works in Warcraft III".to_owned(), false),
     };
     if !s.output.running || !s.output.ready {
@@ -504,18 +508,25 @@ fn session_row(s: &Snapshot) -> Row {
     row(label, doing, Light::Green)
 }
 
+fn profile_label(s: &Snapshot) -> &str {
+    match (s.profile, &s.map) {
+        (Profile::Map, Some(title)) => title,
+        (profile, _) => profile.label(),
+    }
+}
+
 /// Plain-language status for a window. Product words only.
 pub fn view(link: Link, s: &Snapshot) -> View {
     let rows = match link {
         Link::Off => [
             row("Controller", "Controller support is off", Light::Off),
             row("Warcraft III", "Not checked", Light::Off),
-            row(s.profile.label(), "Not checked", Light::Off),
+            row(profile_label(s), "Not checked", Light::Off),
         ],
         Link::Starting => [
             row("Controller", "Turning on controller support…", Light::Amber),
             row("Warcraft III", "Checking…", Light::Amber),
-            row(s.profile.label(), "Checking…", Light::Amber),
+            row(profile_label(s), "Checking…", Light::Amber),
         ],
         Link::Connected => [
             match &s.pad {
@@ -544,8 +555,8 @@ pub fn view(link: Link, s: &Snapshot) -> View {
 mod tests {
     #[test]
     fn standard_and_z_jump_presets_keep_their_bindings() {
-        let standard = smashcraft_bindings();
-        let z_jump = smashcraft_bindings_for(PadPreset::ZJump);
+        let standard = fighter_bindings();
+        let z_jump = fighter_bindings_for(PadPreset::ZJump);
         for (standard, z_jump) in standard.iter().zip(&z_jump) {
             match standard.control {
                 Control::B => { assert_eq!(standard.action, "Jump"); assert_eq!(z_jump.action, "Grab"); assert_eq!(z_jump.press, key("o")); }
@@ -568,12 +579,13 @@ mod tests {
             }),
             game: Some(Game { pid: 4242, window: true }),
             session: Some(Session {
-                map: "Smashcraft".into(),
+                map: "Hero Arena".into(),
                 phase: Phase::Match,
                 player: Some(1),
             }),
-            profile: Profile::Smashcraft,
+            profile: Profile::Map,
             choice: ProfileChoice::Auto,
+            map: Some("Hero Arena".into()),
             output: Output { running: true, ready: true, focused: true },
             problem: None,
         }
@@ -594,7 +606,7 @@ mod tests {
                 ("In a match as Player 1", Light::Green),
             ]
         );
-        assert_eq!(v.rows[2].label, "Smashcraft");
+        assert_eq!(v.rows[2].label, "Hero Arena");
         assert_eq!(v.overall, Light::Green);
     }
 
@@ -602,7 +614,7 @@ mod tests {
     fn waiting_states_are_amber_and_a_missing_pad_is_red() {
         let mut s = playing();
         s.session = None;
-        assert_eq!(view(Link::Connected, &s).rows[2].text, "Waiting for Smashcraft");
+        assert_eq!(view(Link::Connected, &s).rows[2].text, "Waiting for Hero Arena");
         assert_eq!(view(Link::Connected, &s).overall, Light::Amber);
         s.game = None;
         let v = view(Link::Connected, &s);
@@ -704,15 +716,15 @@ mod tests {
     }
 
     #[test]
-    fn auto_follows_a_smashcraft_session() {
-        assert_eq!(ProfileChoice::Auto.resolve(true), Profile::Smashcraft);
+    fn auto_follows_a_map_plugin_session() {
+        assert_eq!(ProfileChoice::Auto.resolve(true), Profile::Map);
         assert_eq!(ProfileChoice::Auto.resolve(false), Profile::AnyMap);
         assert_eq!(ProfileChoice::Off.resolve(true), Profile::Off);
     }
 
     #[test]
     fn every_control_is_bound_at_most_once_per_profile() {
-        for bindings in [smashcraft_bindings(), any_map_bindings()] {
+        for bindings in [fighter_bindings(), any_map_bindings()] {
             let mut seen = std::collections::BTreeSet::new();
             for b in &bindings {
                 assert!(seen.insert(format!("{:?}", b.control)), "{:?} twice", b.control);
