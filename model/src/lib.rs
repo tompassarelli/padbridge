@@ -396,9 +396,10 @@ pub fn pad_bindings(preset: PadPreset, triggers: TriggerShields, kind: PadKind) 
 
 pub fn fighter_bindings_with(preset: PadPreset, triggers: TriggerShields) -> Vec<Binding> {
     use Control::*;
-    let shield = |control, mode| match mode {
-        TriggerShield::Full => bind(control, "Shield", key("q")),
-        TriggerShield::Light => bind(control, "Light shield", key("t")),
+    let shield = |control, mode| match (control, mode) {
+        (Rt, TriggerShield::Full) => bind(control, "Shield", key("v")),
+        (_, TriggerShield::Full) => bind(control, "Shield", key("q")),
+        (_, TriggerShield::Light) => bind(control, "Light shield", key("t")),
     };
     let (attack, special, jump, grab, short_hop, tilt) =
         (key("n"), key("u"), key("i"), key("o"), key("z"), key("p"));

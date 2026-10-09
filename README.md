@@ -185,7 +185,7 @@ Three presets choose the buttons; sticks and Start are the same in all of them.
 | RB | Grab O | Jump I | Grab O |
 | LB | — | — | Jump I |
 | LT | Shield Q | Shield Q | Shield Q |
-| RT | Shield Q | Shield Q | Tilt P |
+| RT | Shield V | Shield V | Tilt P |
 | Left stick click (L3) | — | — | Short hop Z (even held) |
 | Start | Pause Y | Pause Y | Pause Y |
 | Left stick left / right / down | W / R / E | W / R / E | W / R / E |
@@ -216,7 +216,9 @@ the service reads Linux evdev pads and does not apply it.
 Either trigger can instead light shield: choose Full shield or Light shield for
 each trigger in a window, or use `--left-trigger full|light` and
 `--right-trigger full|light`. Light shield presses T and requests
-pressure 77; full shield presses Q and requests 255.
+pressure 77; full shield presses Q on LT and V on RT and requests 255. RT has
+its own key so a second trigger press while the first is held still reaches
+the map as a fresh shield press (wavedash out of shield).
 
 Tap jump is off by default. A window can enable it, or
 `--tap-jump on|off`. When enabled,
@@ -234,8 +236,7 @@ calibration is applied; the deadzone absorbs a pad's resting offset. Left,
 right and up are active when their axis is outside the deadzone; down needs
 the stronger threshold below. Right-stick directions
 use the flick thresholds below and triggers need 4000, strictly beyond. Shared sources are unioned before emission:
-releasing LT while RT is held retains shield; two jump buttons share one held jump
-action. Stick-up is only up: aim, up-special, getup and ledge stand. Hold
+two jump buttons share one held jump action. Stick-up is only up: aim, up-special, getup and ledge stand. Hold
 duration remains available to the game's jump logic.
 
 Hold Tilt (P; RT in the tom preset) with left or right and press Special (U) to use

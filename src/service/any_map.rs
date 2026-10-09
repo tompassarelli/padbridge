@@ -548,7 +548,7 @@ mod tests {
     #[test]
     fn the_keys_mapper_and_the_shown_fighter_layout_agree() {
         let all = [
-            crate::Action::Attack, crate::Action::Special, crate::Action::Jump, crate::Action::ShortHop, crate::Action::Grab, crate::Action::Shield, crate::Action::LightShield, crate::Action::Walk,
+            crate::Action::Attack, crate::Action::Special, crate::Action::Jump, crate::Action::ShortHop, crate::Action::Grab, crate::Action::Shield, crate::Action::RightShield, crate::Action::LightShield, crate::Action::Walk,
             crate::Action::Start, crate::Action::Left, crate::Action::Right, crate::Action::Down, crate::Action::Up,
             crate::Action::CLeft, crate::Action::CRight, crate::Action::CUp, crate::Action::CDown,
         ];
