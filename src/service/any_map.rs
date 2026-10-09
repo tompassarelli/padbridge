@@ -553,7 +553,7 @@ mod tests {
             crate::Action::CLeft, crate::Action::CRight, crate::Action::CUp, crate::Action::CDown,
         ];
         let named: std::collections::BTreeSet<String> = all.into_iter().map(|action| match action.key() { ' ' => "space".to_owned(), key => key.to_string() }).collect();
-        for preset in model::PadPreset::ALL {
+        for preset in model::PadPreset::ALL.into_iter().chain([model::PadPreset::Script]) {
             for left in [model::TriggerShield::Full, model::TriggerShield::Light] {
                 for right in [model::TriggerShield::Full, model::TriggerShield::Light] {
                     let triggers = model::TriggerShields { left, right };

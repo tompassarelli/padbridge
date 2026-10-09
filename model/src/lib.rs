@@ -286,17 +286,21 @@ pub enum PadPreset {
     Melee,
     ZJump,
     Tom,
+    /// Hidden: the encoding of recorded pad scripts (B and Y jump, LB tilt,
+    /// both triggers shield, L3 short hop). Test drivers pass `--preset script`.
+    Script,
 }
 
 impl PadPreset {
+    /// The presets players choose from; `Script` is left out.
     pub const ALL: [Self; 3] = [Self::Melee, Self::ZJump, Self::Tom];
 
     pub fn name(self) -> &'static str {
-        match self { Self::Melee => "melee", Self::ZJump => "z-jump", Self::Tom => "tom" }
+        match self { Self::Melee => "melee", Self::ZJump => "z-jump", Self::Tom => "tom", Self::Script => "script" }
     }
 
     pub fn parse(name: &str) -> Result<Self, String> {
-        Self::ALL.into_iter().find(|preset| preset.name() == name)
+        Self::ALL.into_iter().chain([Self::Script]).find(|preset| preset.name() == name)
             .ok_or_else(|| format!("unknown pad preset {name:?}: {}", Self::ALL.map(Self::name).join(", ")))
     }
 }
@@ -411,6 +415,11 @@ pub fn fighter_bindings_with(preset: PadPreset, triggers: TriggerShields) -> Vec
             bind(A, "Attack", attack), bind(X, "Special", special), bind(B, "Grab", grab.clone()), bind(Y, "Jump", jump.clone()),
             bind(Lb, "Jump", jump), bind(Rb, "Grab", grab), bind(LeftStick, "Short hop", short_hop), bind(Rt, "Tilt", tilt),
             shield(Lt, triggers.left),
+        ],
+        PadPreset::Script => vec![
+            bind(A, "Attack", attack), bind(X, "Special", special), bind(B, "Jump", jump.clone()), bind(Y, "Jump", jump),
+            bind(LeftStick, "Short hop", short_hop), bind(Rb, "Grab", grab), bind(Lb, "Tilt", tilt),
+            shield(Lt, triggers.left), shield(Rt, triggers.right),
         ],
     };
     buttons.into_iter().chain([
@@ -615,6 +624,7 @@ mod tests {
             (PadPreset::Melee, [A, B, X, Y, Lb, Rb, Lt, Rt, LeftStick], ["Attack", "Special", "Jump", "Jump", "", "Grab", "Shield", "Shield", ""]),
             (PadPreset::ZJump, [A, B, X, Y, Lb, Rb, Lt, Rt, LeftStick], ["Attack", "Special", "Grab", "Jump", "", "Jump", "Shield", "Shield", ""]),
             (PadPreset::Tom, [A, B, X, Y, Lb, Rb, Lt, Rt, LeftStick], ["Attack", "Grab", "Special", "Jump", "Jump", "Grab", "Shield", "Tilt", "Short hop"]),
+            (PadPreset::Script, [A, B, X, Y, Lb, Rb, Lt, Rt, LeftStick], ["Attack", "Jump", "Special", "Jump", "Tilt", "Grab", "Shield", "Shield", "Short hop"]),
         ];
         for (preset, controls, actions) in table {
             assert_eq!(controls.map(|control| pressed(preset, control)), actions.map(str::to_owned), "{}", preset.name());

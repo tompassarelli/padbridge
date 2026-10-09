@@ -669,7 +669,7 @@ dependencies = [
 
 [[package]]
 name = "wc3-controller"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "ctrlc",
  "enigo",
@@ -690,7 +690,7 @@ dependencies = [
 
 [[package]]
 name = "wc3-controller-model"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "serde",
  "serde_json",

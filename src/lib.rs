@@ -726,9 +726,11 @@ mod tests {
                 PadPreset::ZJump => vec![(b, Action::Special), (x, Action::Grab), (rb, Action::Jump)],
                 PadPreset::Tom => vec![(b, Action::Grab), (x, Action::Special), (lb, Action::Jump), (rb, Action::Grab),
                     (Sample { left_stick: true, ..Sample::default() }, Action::ShortHop), (Sample { right_trigger: 20_000, ..Sample::default() }, Action::Walk)],
+                PadPreset::Script => vec![(b, Action::Jump), (x, Action::Special), (lb, Action::Walk), (rb, Action::Grab),
+                    (Sample { left_stick: true, ..Sample::default() }, Action::ShortHop)],
             }
         };
-        for preset in PadPreset::ALL {
+        for preset in PadPreset::ALL.into_iter().chain([PadPreset::Script]) {
             for kind in [PadKind::Xbox, PadKind::GameCube] {
             for left in [TriggerShield::Full, TriggerShield::Light] {
                 for right in [TriggerShield::Full, TriggerShield::Light] {

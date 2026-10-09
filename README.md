@@ -198,6 +198,12 @@ jumps, which frees a face button, X, for grab. **tom** adds a tilt modifier on
 RT, a short hop on L3 and a second jump on LB. Changing one button on top of a
 preset is not supported yet.
 
+A fourth, hidden preset, `--preset script`, is the encoding of recorded pad
+scripts and their test drivers: A attack, X special, B and Y jump, RB grab, LB
+tilt, both triggers shield and L3 short hop. It is not listed by `--list` or
+offered to players, so a player preset can change without touching recorded
+scripts.
+
 A GameCube pad (SDL reports `SDL_GAMEPAD_TYPE_GAMECUBE`, e.g. through a Wii U
 or Mayflash adapter) maps by its printed letters: in melee A attacks, B
 specials, X and Y jump, Z grabs and L and R shield. `--list` prints each pad's
