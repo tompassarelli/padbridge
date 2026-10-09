@@ -517,16 +517,18 @@ pub fn fighter_bindings_with(preset: PadPreset, triggers: TriggerShields) -> Vec
             shield(Lt, triggers), shield(Rt, triggers),
         ],
     };
+    let tilts = preset == PadPreset::Tom;
+    let right = |smash: &'static str, tilt: &'static str| if tilts { tilt } else { smash };
     buttons.into_iter().chain([
         bind(Start, "Pause", key("y")),
         bind(LeftLeft, "Move left", key("w")),
         bind(LeftRight, "Move right", key("r")),
         bind(LeftDown, "Crouch / fast fall", key("e")),
         bind(LeftUp, "Up (aim, up special)", key("space")),
-        bind(RightUp, "Up smash", key("j")),
-        bind(RightDown, "Down smash", key("h")),
-        bind(RightLeft, "Smash left", key("b")),
-        bind(RightRight, "Smash right", key("m")),
+        bind(RightUp, right("Up smash", "Up tilt / up air"), key("j")),
+        bind(RightDown, right("Down smash", "Down tilt / down air"), key("h")),
+        bind(RightLeft, right("Smash left", "Tilt left / air left"), key("b")),
+        bind(RightRight, right("Smash right", "Tilt right / air right"), key("m")),
     ]).collect()
 }
 

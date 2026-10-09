@@ -352,8 +352,10 @@ impl Mapper {
         let stick_jump = stick::tap_jump(left_y, self.tap_jump, buttons.contains(&Action::Walk), [Action::Shield, Action::RightShield, Action::LightShield].iter().any(|shield| buttons.contains(shield)));
         // Union source states before diffing, so releasing one source never
         // releases an action another source still owns.
+        let right_stick_tilts = self.preset == model::PadPreset::Tom && (right_x != 0 || right_y != 0);
         let bindings = [
             (Action::Jump, stick_jump),
+            (Action::Walk, right_stick_tilts),
             (Action::Left, left_x < 0),
             (Action::Right, left_x > 0),
             (Action::Down, stick::stick_down(left_y)),
@@ -551,6 +553,17 @@ mod tests {
         );
         assert!(stick(22_937, 0).neutral());
         assert!(!stick(27_000, 0).neutral());
+    }
+
+    #[test]
+    fn tom_right_stick_holds_tilt_with_the_c_stick_key_so_the_map_tilts_on_the_ground_and_throws_aerials() {
+        let stick = |right_x| Sample { right_x, ..Sample::default() };
+        let mut tom = Mapper::new(model::PadPreset::Tom);
+        tick(&mut tom, &Sample::default());
+        assert_eq!(tick(&mut tom, &stick(32_767)), vec![edge(Action::Walk, true), edge(Action::CRight, true)]);
+        assert_eq!(tick(&mut tom, &Sample::default()), vec![edge(Action::Walk, false), edge(Action::CRight, false)]);
+        let mut melee = armed();
+        assert_eq!(tick(&mut melee, &stick(32_767)), vec![edge(Action::CRight, true)]);
     }
 
     #[test]
