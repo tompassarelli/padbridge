@@ -374,16 +374,17 @@ pub enum Move {
     Shield,
     Tilt,
     ShortHop,
+    Meter,
     None,
 }
 
 impl Move {
-    pub const ALL: [Self; 8] = [Self::Attack, Self::Special, Self::Jump, Self::Grab, Self::Shield, Self::Tilt, Self::ShortHop, Self::None];
+    pub const ALL: [Self; 9] = [Self::Attack, Self::Special, Self::Jump, Self::Grab, Self::Shield, Self::Tilt, Self::ShortHop, Self::Meter, Self::None];
 
     pub fn name(self) -> &'static str {
         match self {
             Self::Attack => "attack", Self::Special => "special", Self::Jump => "jump", Self::Grab => "grab",
-            Self::Shield => "shield", Self::Tilt => "tilt", Self::ShortHop => "short_hop", Self::None => "none",
+            Self::Shield => "shield", Self::Tilt => "tilt", Self::ShortHop => "short_hop", Self::Meter => "meter", Self::None => "none",
         }
     }
 
@@ -446,6 +447,7 @@ pub fn remap(bindings: Vec<Binding>, remaps: &Remaps, triggers: TriggerShields) 
         Move::Shield => shield(control, triggers),
         Move::Tilt => bind(control, "Tilt", key("p")),
         Move::ShortHop => bind(control, "Short hop", key("z")),
+        Move::Meter => bind(control, "Meter", key("x")),
         Move::None => return None,
     }))).collect()
 }
@@ -499,7 +501,7 @@ pub fn fighter_bindings_with(preset: PadPreset, triggers: TriggerShields) -> Vec
     let buttons = match preset {
         PadPreset::Melee => vec![
             bind(A, "Attack", attack), bind(B, "Special", special), bind(X, "Jump", jump.clone()), bind(Y, "Jump", jump),
-            bind(Lb, "Tilt", tilt), bind(Rb, "Grab", grab), shield(Lt, triggers), shield(Rt, triggers),
+            bind(Rb, "Grab", grab), shield(Lt, triggers), shield(Rt, triggers),
         ],
         PadPreset::ZJump => vec![
             bind(A, "Attack", attack), bind(B, "Special", special), bind(X, "Grab", grab), bind(Y, "Jump", jump.clone()),
@@ -507,7 +509,7 @@ pub fn fighter_bindings_with(preset: PadPreset, triggers: TriggerShields) -> Vec
         ],
         PadPreset::Tom => vec![
             bind(A, "Attack", attack), bind(B, "Grab", grab), bind(X, "Special", special), bind(Y, "Jump", jump),
-            bind(Lb, "Short hop", short_hop), bind(Rb, "Tilt", tilt), shield(Lt, triggers), shield(Rt, triggers),
+            bind(Lb, "Short hop", short_hop), bind(Rb, "Meter", key("x")), shield(Lt, triggers), shield(Rt, triggers),
         ],
         PadPreset::Script => vec![
             bind(A, "Attack", attack), bind(X, "Special", special), bind(B, "Jump", jump.clone()), bind(Y, "Jump", jump),
@@ -714,9 +716,9 @@ mod tests {
         let pressed = |preset, control| fighter_bindings_for(preset).into_iter().filter(|b| b.control == control).map(|b| b.action).collect::<Vec<_>>().join("+");
         use Control::*;
         let table = [
-            (PadPreset::Melee, [A, B, X, Y, Lb, Rb, Lt, Rt, LeftStick], ["Attack", "Special", "Jump", "Jump", "Tilt", "Grab", "Shield", "Shield", ""]),
+            (PadPreset::Melee, [A, B, X, Y, Lb, Rb, Lt, Rt, LeftStick], ["Attack", "Special", "Jump", "Jump", "", "Grab", "Shield", "Shield", ""]),
             (PadPreset::ZJump, [A, B, X, Y, Lb, Rb, Lt, Rt, LeftStick], ["Attack", "Special", "Grab", "Jump", "", "Jump", "Shield", "Shield", ""]),
-            (PadPreset::Tom, [A, B, X, Y, Lb, Rb, Lt, Rt, LeftStick], ["Attack", "Grab", "Special", "Jump", "Short hop", "Tilt", "Shield", "Shield", ""]),
+            (PadPreset::Tom, [A, B, X, Y, Lb, Rb, Lt, Rt, LeftStick], ["Attack", "Grab", "Special", "Jump", "Short hop", "Meter", "Shield", "Shield", ""]),
             (PadPreset::Script, [A, B, X, Y, Lb, Rb, Lt, Rt, LeftStick], ["Attack", "Jump", "Special", "Jump", "Tilt", "Grab", "Shield", "Shield", "Short hop"]),
         ];
         for (preset, controls, actions) in table {

@@ -183,8 +183,8 @@ Three presets choose the buttons; sticks and Start are the same in all of them.
 | B | Special U | Special U | Grab O |
 | X | Jump I | Grab O | Special U |
 | Y | Jump I | Jump I | Jump I |
-| RB | Grab O | Jump I | Tilt P (hold) |
-| LB | Tilt P (hold) | — | Short hop Z (even held) |
+| RB | Grab O | Jump I | Meter X (+ Special: EX) |
+| LB | — | — | Short hop Z (even held) |
 | LT | Shield Q | Shield Q | Shield Q |
 | RT | Shield V | Shield V | Shield V |
 | Start | Pause Y | Pause Y | Pause Y |
@@ -194,10 +194,11 @@ Three presets choose the buttons; sticks and Start are the same in all of them.
 
 **melee**, the default new players get, is the GameCube layout by function:
 A attacks, B specials, X and Y jump (tap for a short hop, hold for a full
-hop), Z (RB) grabs, either trigger shields and LB holds the tilt/walk
-modifier. **z-jump** is the common Melee swap: Z (RB) jumps, which frees a face
+hop), Z (RB) grabs, either trigger shields and LB is free. **z-jump** is the common Melee swap: Z (RB) jumps, which frees a face
 button, X, for grab. **tom** keeps X special and B grab, makes LB a dedicated
-short hop and Y an ordinary jump, and holds tilt on RB. In every preset a
+short hop and Y an ordinary jump, and makes RB the Meter button: RB +
+Special is EX (Shield + Special still is). Neither preset has a tilt/walk
+modifier; it remains a remap (`tilt`). In every preset a
 shield press during jump squat comes out as an air dodge on the first
 airborne frame (a wavedash).
 
@@ -207,8 +208,8 @@ previous remaps; the service saves them with the other settings in
 `~/.config/wc3-controller/settings.json` as `"remaps"`. Controls are `a`, `b`,
 `x`, `y`, `lb`, `rb`, `lt`, `rt` and `left_stick`, named by position as in
 layout files (on a GameCube pad after its letter swap: `x` is the printed B);
-moves are `attack`, `special`, `jump`, `grab`, `shield`, `tilt`, `short_hop`
-and `none` (unbound). A trigger remapped to shield keeps its full or light
+moves are `attack`, `special`, `jump`, `grab`, `shield`, `tilt`, `short_hop`,
+`meter` and `none` (unbound). A trigger remapped to shield keeps its full or light
 choice; shield on a button is full shield. `wc3-controller --remaps
 lb=grab,rb=none` takes the same remaps, and `model::ControllerSettings::bindings`
 gives the remapped layout a window shows.
@@ -254,7 +255,7 @@ use the flick thresholds below and triggers need 4000, strictly beyond. Shared s
 two jump buttons share one held jump action. Stick-up is only up: aim, up-special, getup and ledge stand. Hold
 duration remains available to the game's jump logic.
 
-Hold Tilt (P; LB in melee, RB in tom) with left or right and press Special (U) to use
+Hold Tilt (P; a `tilt` remap on a pad) with left or right and press Special (U) to use
 neutral special facing that direction. Without Tilt, left or right selects
 side special. Up and down still select their specials while Tilt is held.
 

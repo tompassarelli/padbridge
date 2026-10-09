@@ -69,6 +69,7 @@ pub enum Action {
     RightShield,
     LightShield,
     Walk,
+    Meter,
     Start,
     Left,
     Right,
@@ -81,7 +82,7 @@ pub enum Action {
 }
 
 impl Action {
-    const BUTTONS: [Self; 10] = [Self::Attack, Self::Special, Self::Jump, Self::ShortHop, Self::Grab, Self::Shield, Self::RightShield, Self::LightShield, Self::Walk, Self::Start];
+    const BUTTONS: [Self; 11] = [Self::Attack, Self::Special, Self::Jump, Self::ShortHop, Self::Grab, Self::Shield, Self::RightShield, Self::LightShield, Self::Walk, Self::Meter, Self::Start];
 
     fn of_press(press: &model::Press) -> Option<Self> {
         let model::Press::Key(name) = press else { return None };
@@ -99,6 +100,7 @@ impl Action {
             Self::RightShield => 'v',
             Self::LightShield => 't',
             Self::Walk => 'p',
+            Self::Meter => 'x',
             Self::Start => 'y',
             Self::Left => 'w',
             Self::Right => 'r',
@@ -406,13 +408,13 @@ mod tests {
 
     #[test]
     fn optional_tap_jump_escapes_shield_but_tilt_caps_only_stick_jump() {
-        let mut mapper = Mapper::new(model::PadPreset::Tom);
+        let mut mapper = Mapper::new(model::PadPreset::Script);
         tick(&mut mapper, &Sample::default());
         let mut sample = Sample { left_trigger: 20_000, left_y: -32_767, ..Sample::default() };
         assert!(!tick(&mut mapper, &sample).contains(&edge(Action::Jump, true)));
         mapper.set_tap_jump(true);
         assert!(tick(&mut mapper, &sample).contains(&edge(Action::Jump, true)));
-        sample.rb = true;
+        sample.lb = true;
         assert!(tick(&mut mapper, &sample).contains(&edge(Action::Jump, false)));
         sample.y = true;
         assert!(tick(&mut mapper, &sample).contains(&edge(Action::Jump, true)));
@@ -749,9 +751,9 @@ mod tests {
             let (b, x) = if kind == PadKind::GameCube { (x, b) } else { (b, x) };
             let (rb, lb) = (Sample { rb: true, ..Sample::default() }, Sample { lb: true, ..Sample::default() });
             match preset {
-                PadPreset::Melee => vec![(b, Action::Special), (x, Action::Jump), (lb, Action::Walk), (rb, Action::Grab)],
+                PadPreset::Melee => vec![(b, Action::Special), (x, Action::Jump), (rb, Action::Grab)],
                 PadPreset::ZJump => vec![(b, Action::Special), (x, Action::Grab), (rb, Action::Jump)],
-                PadPreset::Tom => vec![(b, Action::Grab), (x, Action::Special), (lb, Action::ShortHop), (rb, Action::Walk)],
+                PadPreset::Tom => vec![(b, Action::Grab), (x, Action::Special), (lb, Action::ShortHop), (rb, Action::Meter)],
                 PadPreset::Script => vec![(b, Action::Jump), (x, Action::Special), (lb, Action::Walk), (rb, Action::Grab),
                     (Sample { left_stick: true, ..Sample::default() }, Action::ShortHop)],
             }

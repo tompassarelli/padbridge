@@ -502,7 +502,7 @@ mod tests {
         let mut pad = InputView::default();
         // Arms on a neutral pad.
         driver.step(&pad, true, 0.0, &mut out).unwrap();
-        for (button, key) in [(Button::A, "n"), (Button::X, "u"), (Button::B, "o"), (Button::Y, "i"), (Button::Lb, "z"), (Button::Rb, "p"), (Button::Start, "y")] {
+        for (button, key) in [(Button::A, "n"), (Button::X, "u"), (Button::B, "o"), (Button::Y, "i"), (Button::Lb, "z"), (Button::Rb, "x"), (Button::Start, "y")] {
             pad.press(button, true);
             driver.step(&pad, true, 0.0, &mut out).unwrap();
             pad.press(button, false);
@@ -549,7 +549,7 @@ mod tests {
     #[test]
     fn the_keys_mapper_and_the_shown_fighter_layout_agree() {
         let all = [
-            crate::Action::Attack, crate::Action::Special, crate::Action::Jump, crate::Action::ShortHop, crate::Action::Grab, crate::Action::Shield, crate::Action::RightShield, crate::Action::LightShield, crate::Action::Walk,
+            crate::Action::Attack, crate::Action::Special, crate::Action::Jump, crate::Action::ShortHop, crate::Action::Grab, crate::Action::Shield, crate::Action::RightShield, crate::Action::LightShield, crate::Action::Walk, crate::Action::Meter,
             crate::Action::Start, crate::Action::Left, crate::Action::Right, crate::Action::Down, crate::Action::Up,
             crate::Action::CLeft, crate::Action::CRight, crate::Action::CUp, crate::Action::CDown,
         ];
