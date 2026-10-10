@@ -43,13 +43,7 @@ fn executable_match_uses_the_exact_file_name() {
 #[cfg(target_os = "linux")]
 mod linux {
     use serde_json::Value;
-    use std::{
-        fs,
-        io::{BufRead, BufReader, Write},
-        os::unix::net::UnixStream,
-        path::PathBuf,
-        time::Duration,
-    };
+    use std::{fs, path::PathBuf, time::Duration};
     use x11rb::{
         protocol::{
             res::{ClientIdMask, ClientIdSpec, ConnectionExt as _},
@@ -317,29 +311,8 @@ mod linux {
         }
 
         fn request(&self, request: &str) -> Result<Value, String> {
-            let mut socket =
-                UnixStream::connect(self.socket.as_ref().ok_or("Niri socket not selected")?)
-                    .map_err(|e| e.to_string())?;
-            socket
-                .set_read_timeout(Some(Duration::from_millis(50)))
-                .map_err(|e| e.to_string())?;
-            socket
-                .set_write_timeout(Some(Duration::from_millis(50)))
-                .map_err(|e| e.to_string())?;
-            writeln!(socket, "\"{request}\"").map_err(|e| e.to_string())?;
-            socket
-                .shutdown(std::net::Shutdown::Write)
-                .map_err(|e| e.to_string())?;
-            let mut reply = String::new();
-            BufReader::new(socket)
-                .read_line(&mut reply)
-                .map_err(|e| e.to_string())?;
-            let parsed: Value = serde_json::from_str(&reply).map_err(|e| e.to_string())?;
-            parsed
-                .get("Ok")
-                .and_then(|ok| ok.get(request))
-                .cloned()
-                .ok_or_else(|| format!("Niri did not return {request}"))
+            let socket = self.socket.as_ref().ok_or("Niri socket not selected")?;
+            crate::niri::request(socket, request, Duration::from_millis(50))
         }
 
         fn check_window_pid(&self) -> Result<(), String> {
