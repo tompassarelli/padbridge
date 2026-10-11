@@ -397,15 +397,15 @@ its input history. The fighter layout has no View action.
 
 ## Observed evidence
 
-The Niri bridge repair passed seven tests (five mapping/rearm tests and two
-focused identity/recipient tests) and rebuilt successfully. Read-only native
+The Niri bridge repair passed its mapping/rearm and focused identity/recipient
+tests and rebuilt successfully. Read-only native
 checking established the bridge's XRes ownership and returned false while
 Chrome was focused. The parent trial then reported true for the selected
 Warcraft window after focusing it and moving the pointer over it. Neither check
 opened keyboard output; game consumption and physical-controller delivery are
 separate acceptance steps.
 
-Linux x86_64: `cargo test` passed all five tests covering the requested bindings,
+Linux x86_64: `cargo test` passed the tests covering the requested bindings,
 overlapping triggers/jump sources, focus/disconnect release and neutral rearm.
 `cargo build --locked --jobs 2` succeeded. Read-only `--list` using SDL 3.4.16
 found one **Xbox One S Controller**, VID 045e/PID 02ea, at `/dev/input/event1`,

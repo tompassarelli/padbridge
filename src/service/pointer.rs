@@ -86,17 +86,6 @@ impl VirtualPointer {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    /// Run by hand on a desktop: connects and moves by nothing.
-    #[test]
-    #[ignore]
-    fn the_compositor_takes_a_virtual_pointer() {
-        let mut pointer = super::VirtualPointer::new().unwrap();
-        pointer.motion(0.0, 0.0).unwrap();
-    }
-}
-
 impl Drop for VirtualPointer {
     fn drop(&mut self) {
         self.pointer.destroy();
