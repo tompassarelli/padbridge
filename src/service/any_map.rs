@@ -675,16 +675,19 @@ mod contract {
 }
 
 #[cfg(test)]
-mod tests {
+mod properties {
     use super::*;
+    use crate::pad_ingress::{Ingress, Route};
+    use crate::rng::{Rng, cases};
     use model::{Button, Control, Press};
+    use std::collections::BTreeSet;
 
-    /// A fake output device: records what reaches it.
     #[derive(Default)]
     struct Recorded(Vec<String>);
 
     impl Output for Recorded {
         fn key(&mut self, name: &str, down: bool) -> Result<(), String> {
+            assert!(key_of(name).is_some(), "{name} has no output key");
             self.0.push(format!("{} {name}", if down { "down" } else { "up" }));
             Ok(())
         }
@@ -693,202 +696,194 @@ mod tests {
             Ok(())
         }
         fn pointer(&mut self, dx: f64, dy: f64) -> Result<(), String> {
-            self.0.push(format!("move {dx:.0},{dy:.0}"));
+            self.0.push(format!("move {dx:.3},{dy:.3}"));
+            Ok(())
+        }
+        fn cursor(&mut self, x: f64, y: f64, _: u32, _: u32) -> Result<(), String> {
+            self.0.push(format!("cursor {x:.3},{y:.3}"));
             Ok(())
         }
     }
 
-    fn take(out: &mut Recorded) -> Vec<String> {
-        std::mem::take(&mut out.0)
+    impl crate::pad_ingress::Output for Recorded {
+        fn key(&mut self, name: &str, down: bool) -> Result<(), String> { Output::key(self, name, down) }
+        fn cursor(&mut self, x: f64, y: f64, width: u32, height: u32) -> Result<(), String> { Output::cursor(self, x, y, width, height) }
     }
 
-    #[test]
-    fn a_session_on_keys_presses_the_fighter_layout() {
-        let (mut driver, mut out) = (Driver::keys(model::PadPreset::Tom), Recorded::default());
-        let mut pad = InputView::default();
-        // Arms on a neutral pad.
-        driver.step(&pad, true, 0.0, &mut out).unwrap();
-        for (button, key) in [(Button::A, "n"), (Button::X, "u"), (Button::B, "o"), (Button::Y, "i"), (Button::Lb, "z"), (Button::Rb, "x"), (Button::Start, "y")] {
-            pad.press(button, true);
-            driver.step(&pad, true, 0.0, &mut out).unwrap();
-            pad.press(button, false);
-            driver.step(&pad, true, 0.0, &mut out).unwrap();
-            assert_eq!(take(&mut out), [format!("down {key}"), format!("up {key}")], "{button:?}");
-        }
-        pad.lt = 20000;
-        pad.left = [-32767, 0];
-        pad.right = [0, -32767];
-        driver.step(&pad, true, 0.1, &mut out).unwrap();
-        let mut pressed = take(&mut out);
-        pressed.sort();
-        assert_eq!(pressed, ["down j", "down p", "down q", "down w"]);
-        // Focus loss releases them; back in focus nothing presses until the pad is neutral.
-        driver.step(&pad, false, 0.0, &mut out).unwrap();
-        assert_eq!(take(&mut out).len(), 4);
-        driver.step(&pad, true, 0.0, &mut out).unwrap();
-        assert!(take(&mut out).is_empty());
-    }
-
-    #[test]
-    fn analog_focus_loss_releases_marker_and_payload_and_waits_for_neutral() {
-        let (mut driver, mut out) = (Driver::keys_with_ingress(model::PadPreset::Melee, crate::pad_ingress::Route::Keys), Recorded::default());
-        driver.step(&InputView::default(), true, 0.0, &mut out).unwrap();
-        let pad = InputView { left: [16384, 0], rt: 32767, ..InputView::default() };
-        driver.step(&pad, true, 0.0, &mut out).unwrap();
-        take(&mut out);
-        driver.step(&pad, false, 0.0, &mut out).unwrap();
-        let released = take(&mut out);
-        assert!(released.contains(&"up end".to_owned()));
-        assert!(released.contains(&"up home".to_owned()));
-        assert!(released.iter().all(|event| event.starts_with("up ")));
-        driver.step(&pad, true, 0.0, &mut out).unwrap();
-        assert!(take(&mut out).is_empty());
-        driver.step(&InputView::default(), true, 0.0, &mut out).unwrap();
-        assert!(take(&mut out).contains(&"down end".to_owned()));
-        driver.release(&mut out).unwrap();
-        assert!(take(&mut out).contains(&"up end".to_owned()));
-        for key in crate::model::pad::KEY_NAMES.into_iter().chain(["end", "home", "pageup", "pagedown"]) {
-            assert!(key_of(key).is_some(), "{key}");
+    fn reference_sample(input: &InputView) -> crate::Sample {
+        let on = |button: Button| input.pressed(button);
+        crate::Sample {
+            left_x: input.left[0], left_y: input.left[1], right_x: input.right[0], right_y: input.right[1],
+            left_trigger: input.lt as i16, right_trigger: input.rt as i16,
+            a: on(Button::A), b: on(Button::B), x: on(Button::X), y: on(Button::Y), lb: on(Button::Lb), rb: on(Button::Rb),
+            start: on(Button::Start), left_stick: on(Button::LeftStick),
         }
     }
 
+    fn deliver(events: Vec<Event>, out: &mut Recorded) {
+        for event in events {
+            let (held, down) = match event { Event::Down(held) => (held, true), Event::Up(held) => (held, false) };
+            match held {
+                Held::Key(name) => Output::key(out, &name, down).unwrap(),
+                Held::LeftClick => out.click(false, down).unwrap(),
+                Held::RightClick => out.click(true, down).unwrap(),
+            }
+        }
+    }
+
+    fn deliver_keys(transitions: Vec<crate::Transition>, out: &mut Recorded) {
+        for t in transitions {
+            let key = match t.action.key() { ' ' => "space".to_owned(), key => key.to_string() };
+            Output::key(out, &key, t.pressed).unwrap();
+        }
+    }
+
+    /// The menu pointer as specified: still inside 0.12 of full scale, then speed
+    /// ((deflection - 0.12) / 0.88)^1.7 of the window width per second along the stick.
+    fn menu_motion(curve: MenuCurve, [x, y]: [i16; 2], seconds: f32) -> (f64, f64) {
+        let (x, y) = (f64::from(x) / 32767.0, f64::from(y) / 32767.0);
+        let length = x.hypot(y);
+        if length <= 0.12 { return (0.0, 0.0); }
+        let speed = curve.full_speed * ((length.min(1.0) - 0.12) / 0.88).powf(1.7) * f64::from(seconds);
+        (x / length * speed, y / length * speed)
+    }
+
+    enum Kind { AnyMap, Menu(bool), Keys(Route) }
+
+    fn input(rng: &mut Rng) -> InputView {
+        if rng.chance(35) {
+            return InputView::default();
+        }
+        let axis = |rng: &mut Rng| { let free = rng.next() as i16; rng.pick(&[0, 0, 3900, 9175, -9175, 16384, -23170, 32767, -32767, free]) };
+        let mut view = InputView { left: [axis(rng), axis(rng)], right: [axis(rng), axis(rng)], lt: rng.pick(&[0, 0, 20000, 32767]), rt: rng.pick(&[0, 0, 32767]), buttons: 0 };
+        for _ in 0..rng.below(3) {
+            view.press(rng.pick(&[Button::A, Button::B, Button::X, Button::Y, Button::Lb, Button::Rb, Button::Start, Button::Back, Button::LeftStick, Button::DpadUp]), true);
+        }
+        view
+    }
+
     #[test]
-    fn the_keys_mapper_and_the_shown_fighter_layout_agree() {
-        let all = [
-            crate::Action::Attack, crate::Action::Special, crate::Action::Jump, crate::Action::ShortHop, crate::Action::Grab, crate::Action::Shield, crate::Action::LightShield, crate::Action::Walk, crate::Action::Meter,
-            crate::Action::Start, crate::Action::Left, crate::Action::Right, crate::Action::Down, crate::Action::Up,
-            crate::Action::CLeft, crate::Action::CRight, crate::Action::CUp, crate::Action::CDown,
-        ];
-        let named: std::collections::BTreeSet<String> = all.into_iter().map(|action| match action.key() { ' ' => "space".to_owned(), key => key.to_string() }).collect();
-        for preset in model::PadPreset::ALL.into_iter().chain([model::PadPreset::Script]) {
-            for left in [model::TriggerShield::Full, model::TriggerShield::Light] {
-                for right in [model::TriggerShield::Full, model::TriggerShield::Light] {
-                    let triggers = model::TriggerShields { left, right };
-                    for binding in model::fighter_bindings_with(preset, triggers) {
-                        let Press::Key(key) = binding.press else { panic!("{binding:?}") };
-                        assert!(named.contains(&key), "{} {key}", preset.name());
+    fn the_driver_gates_presses_on_focus_and_agrees_with_its_mappers() {
+        let mut rng = Rng::new(6);
+        let grid = crate::pad_ingress::CursorGrid { x: 10.0, y: 20.0, width: 127.0, height: 254.0, screen_width: 1920, screen_height: 1080 };
+        for _ in 0..cases() {
+            let kind = match rng.below(4) {
+                0 => Kind::AnyMap,
+                1 => Kind::Menu(rng.chance(50)),
+                _ => Kind::Keys(rng.pick(&[Route::Digital, Route::Keys, Route::Cursor(grid)])),
+            };
+            let preset = rng.pick(&[model::PadPreset::Melee, model::PadPreset::ZJump, model::PadPreset::Tom]);
+            let curve = MenuCurve::for_window_width(2560.0);
+            let mut driver = match kind {
+                Kind::AnyMap => Driver::new(default_bindings()),
+                Kind::Menu(start) => Driver::menu(curve, start),
+                Kind::Keys(route) => Driver::keys_with_ingress(preset, route),
+            };
+            let mut shadow = Mapper::new(default_bindings());
+            let mut keys = crate::Mapper::new(preset);
+            let mut analog = Ingress::new(match kind { Kind::Keys(route) => route, _ => Route::Digital });
+            let (mut was_focused, mut armed, mut menu_held) = (false, false, BTreeSet::new());
+            let mut down = BTreeSet::new();
+            for _ in 0..30 {
+                let (mut out, mut expected) = (Recorded::default(), Recorded::default());
+                let roll = rng.below(100);
+                let focused = rng.chance(80);
+                if roll < 8 {
+                    driver.release(&mut out).unwrap();
+                    match kind {
+                        Kind::Keys(_) => { deliver_keys(keys.update(None, false), &mut expected); analog.release(&mut expected).unwrap(); }
+                        Kind::AnyMap => deliver(shadow.release_all(), &mut expected),
+                        Kind::Menu(_) => expected.0.extend(std::mem::take(&mut menu_held).into_iter().map(|held| format!("up {held}"))),
                     }
+                    let mut got = out.0.clone();
+                    got.sort();
+                    expected.0.sort();
+                    assert_eq!(got, expected.0);
+                    armed = false;
+                } else if roll < 14 && matches!(kind, Kind::AnyMap) {
+                    let mut bindings = default_bindings();
+                    bindings.retain(|_| rng.chance(70));
+                    if rng.chance(50) {
+                        bindings.retain(|b| b.control != Control::X);
+                        bindings.push(Binding { control: Control::X, action: "Hold".into(), press: Press::Key("h".into()) });
+                    }
+                    driver.bind(bindings.clone(), &mut out).unwrap();
+                    deliver(shadow.release_all(), &mut expected);
+                    shadow = Mapper::new(bindings);
+                    assert_eq!(out.0, expected.0);
+                } else {
+                    let input = input(&mut rng);
+                    let seconds = rng.pick(&[0.0, 0.0, 0.01, 0.1]);
+                    driver.step(&input, focused, seconds, &mut out).unwrap();
+                    match kind {
+                        Kind::Keys(_) => {
+                            let sample = reference_sample(&input);
+                            deliver_keys(keys.update(Some(&sample), focused), &mut expected);
+                            analog.update(&sample, focused && keys.armed(), &mut expected).unwrap();
+                            assert_eq!(out.0, expected.0);
+                        }
+                        Kind::AnyMap => {
+                            if focused {
+                                deliver(shadow.update(&input), &mut expected);
+                                if seconds > 0.0 {
+                                    let (dx, dy) = shadow.pointer(&input, seconds);
+                                    if (dx, dy) != (0, 0) { expected.pointer(f64::from(dx), f64::from(dy)).unwrap(); }
+                                }
+                            } else if was_focused {
+                                deliver(shadow.release_all(), &mut expected);
+                            }
+                            assert_eq!(out.0, expected.0);
+                        }
+                        Kind::Menu(start_on_keys) => {
+                            if !focused {
+                                if was_focused {
+                                    for held in std::mem::take(&mut menu_held) { expected.0.push(format!("up {held}")); }
+                                }
+                                armed = false;
+                            } else {
+                                let mut want = BTreeSet::new();
+                                if input.pressed(Button::A) { want.insert("left-click".to_owned()); }
+                                if input.pressed(Button::B) { want.insert("right-click".to_owned()); }
+                                if start_on_keys && input.pressed(Button::Start) { want.insert("y".to_owned()); }
+                                if !armed && want.is_empty() { armed = true; }
+                                if armed {
+                                    let mut edges: Vec<String> = menu_held.difference(&want).map(|h| format!("up {h}")).collect();
+                                    edges.extend(want.difference(&menu_held).map(|h| format!("down {h}")));
+                                    let mut got: Vec<String> = out.0.iter().filter(|e| !e.starts_with("move")).cloned().collect();
+                                    got.sort();
+                                    edges.sort();
+                                    assert_eq!(got, edges, "{input:?}");
+                                    menu_held = want;
+                                } else {
+                                    assert!(out.0.iter().all(|e| e.starts_with("move")), "{:?}", out.0);
+                                }
+                                let (dx, dy) = if seconds > 0.0 { menu_motion(curve, input.left, seconds) } else { (0.0, 0.0) };
+                                let moved: Vec<&String> = out.0.iter().filter(|e| e.starts_with("move")).collect();
+                                if (dx, dy) == (0.0, 0.0) {
+                                    assert!(moved.is_empty(), "{input:?} {moved:?}");
+                                } else {
+                                    assert_eq!(moved, [&format!("move {dx:.3},{dy:.3}")], "{input:?}");
+                                }
+                                expected.0 = out.0.clone();
+                            }
+                            if !focused { assert_eq!(out.0, expected.0); }
+                        }
+                    }
+                    was_focused = focused;
+                }
+                for event in &out.0 {
+                    if let Some(name) = event.strip_prefix("down ") {
+                        assert!(down.insert(name.to_owned()), "{name} pressed twice");
+                    } else if let Some(name) = event.strip_prefix("up ") {
+                        assert!(down.remove(name), "{name} released while up");
+                    } else {
+                        assert!(was_focused, "{event} while unfocused");
+                    }
+                }
+                if !was_focused || roll < 8 {
+                    assert!(down.is_empty(), "held while unfocused or released: {down:?}");
                 }
             }
         }
-    }
-
-    #[test]
-    fn the_default_layout_plays_melee_warcraft() {
-        let (mut driver, mut out) = (Driver::new(default_bindings()), Recorded::default());
-        let mut pad = InputView::default();
-        driver.step(&pad, true, 0.0, &mut out).unwrap();
-        pad.press(Button::A, true);
-        driver.step(&pad, true, 0.0, &mut out).unwrap();
-        pad.press(Button::A, false);
-        pad.press(Button::B, true);
-        driver.step(&pad, true, 0.0, &mut out).unwrap();
-        assert_eq!(take(&mut out), ["down left-click", "up left-click", "down right-click"]);
-        pad.press(Button::B, false);
-        pad.press(Button::Lb, true);
-        pad.left = [0, -32767];
-        driver.step(&pad, true, 0.0, &mut out).unwrap();
-        assert_eq!(take(&mut out), ["up right-click", "down 1", "down up"]);
-        // The right stick moves the pointer; the left stick never does.
-        pad.right = [32767, 0];
-        driver.step(&pad, true, 0.01, &mut out).unwrap();
-        assert_eq!(take(&mut out), ["move 14,0"]);
-    }
-
-    #[test]
-    fn focus_loss_releases_everything_and_needs_neutral_again() {
-        let (mut driver, mut out) = (Driver::new(default_bindings()), Recorded::default());
-        let mut pad = InputView::default();
-        driver.step(&pad, true, 0.0, &mut out).unwrap();
-        pad.press(Button::Rb, true);
-        pad.right = [32767, 0];
-        driver.step(&pad, true, 0.0, &mut out).unwrap();
-        assert_eq!(take(&mut out), ["down 2"]);
-        driver.step(&pad, false, 0.01, &mut out).unwrap();
-        assert_eq!(take(&mut out), ["up 2"]);
-        // Unfocused: nothing at all, the pointer included.
-        driver.step(&pad, false, 0.01, &mut out).unwrap();
-        assert!(take(&mut out).is_empty());
-        // Back in focus with the button still held: it isn't replayed.
-        driver.step(&pad, true, 0.0, &mut out).unwrap();
-        assert!(take(&mut out).is_empty());
-        pad = InputView::default();
-        driver.step(&pad, true, 0.0, &mut out).unwrap();
-        pad.press(Button::Rb, true);
-        driver.step(&pad, true, 0.0, &mut out).unwrap();
-        assert_eq!(take(&mut out), ["down 2"]);
-    }
-
-    #[test]
-    fn new_bindings_release_the_old_ones_first() {
-        let (mut driver, mut out) = (Driver::new(default_bindings()), Recorded::default());
-        let mut pad = InputView::default();
-        driver.step(&pad, true, 0.0, &mut out).unwrap();
-        pad.press(Button::X, true);
-        driver.step(&pad, true, 0.0, &mut out).unwrap();
-        driver.bind(vec![Binding { control: Control::X, action: "Hold".into(), press: Press::Key("h".into()) }], &mut out).unwrap();
-        assert_eq!(take(&mut out), ["down q", "up q"]);
-        pad = InputView::default();
-        driver.step(&pad, true, 0.0, &mut out).unwrap();
-        pad.press(Button::X, true);
-        driver.step(&pad, true, 0.0, &mut out).unwrap();
-        assert_eq!(take(&mut out), ["down h"]);
-    }
-
-    #[test]
-    fn in_map_menus_the_left_stick_moves_the_pointer_by_deflection_and_a_clicks() {
-        let curve = MenuCurve::for_window_width(2560.0);
-        let (mut driver, mut out) = (Driver::menu(curve, false), Recorded::default());
-        let mut pad = InputView::default();
-        driver.step(&pad, true, 0.0, &mut out).unwrap();
-        // Inside the small deadzone: still.
-        pad.left = [3900, 0];
-        driver.step(&pad, true, 0.1, &mut out).unwrap();
-        assert!(take(&mut out).is_empty());
-        // Half tilt is well under half speed; full tilt crosses the screen in one second.
-        pad.left = [16384, 0];
-        driver.step(&pad, true, 0.1, &mut out).unwrap();
-        pad.left = [32767, 0];
-        driver.step(&pad, true, 0.1, &mut out).unwrap();
-        assert_eq!(take(&mut out), ["move 61,0", "move 256,0"]);
-        let crossing = 2560.0 / curve.velocity([32767, 0]).0;
-        assert!((0.9..=1.1).contains(&crossing), "{crossing}");
-        // Diagonals keep their direction; up is negative y.
-        let (vx, vy) = curve.velocity([-23170, -23170]);
-        assert!(vx < 0.0 && (vx - vy).abs() < 1e-9);
-        // A clicks; B is the right button; the face buttons press no keys.
-        pad.left = [0, 0];
-        pad.press(Button::A, true);
-        driver.step(&pad, true, 0.0, &mut out).unwrap();
-        pad.press(Button::A, false);
-        pad.press(Button::B, true);
-        pad.press(Button::X, true);
-        driver.step(&pad, true, 0.0, &mut out).unwrap();
-        assert_eq!(take(&mut out), ["down left-click", "up left-click", "down right-click"]);
-        // Unfocused, nothing moves.
-        pad.left = [32767, 0];
-        driver.step(&pad, false, 0.1, &mut out).unwrap();
-        assert_eq!(take(&mut out), ["up right-click"]);
-        // A session on keys keeps its Start mapping without a helper.
-        let mut driver = Driver::menu(curve, true);
-        let mut pad = InputView::default();
-        driver.step(&pad, true, 0.0, &mut out).unwrap();
-        pad.press(Button::Start, true);
-        driver.step(&pad, true, 0.0, &mut out).unwrap();
-        pad.press(Button::Start, false);
-        driver.step(&pad, true, 0.0, &mut out).unwrap();
-        assert_eq!(take(&mut out), ["down y", "up y"]);
-    }
-
-    #[test]
-    fn every_default_key_has_an_output_key() {
-        for binding in default_bindings() {
-            if let Press::Key(name) = &binding.press {
-                assert!(key_of(name).is_some(), "{name}");
-            }
-        }
-        assert_eq!(key_of("Q"), Some(enigo::Key::Unicode('q')));
-        assert_eq!(key_of("f10"), Some(enigo::Key::F10));
-        assert_eq!(key_of("shift"), None);
     }
 }

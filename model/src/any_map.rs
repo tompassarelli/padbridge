@@ -148,91 +148,119 @@ impl Mapper {
 }
 
 #[cfg(test)]
-mod tests {
+mod properties {
     use super::*;
-    use crate::any_map_bindings;
+    use crate::rng::{Rng, cases};
 
-    fn key(name: &str) -> Held {
-        Held::Key(name.into())
+    const CONTROLS: [Control; 23] = [
+        Control::LeftStick, Control::A, Control::B, Control::X, Control::Y, Control::Lb, Control::Rb, Control::Lt, Control::Rt,
+        Control::Start, Control::Back, Control::DpadUp, Control::DpadDown, Control::DpadLeft, Control::DpadRight,
+        Control::LeftUp, Control::LeftDown, Control::LeftLeft, Control::LeftRight, Control::RightUp, Control::RightDown, Control::RightLeft, Control::RightRight,
+    ];
+    const BUTTONS: [(Control, Button); 13] = [
+        (Control::LeftStick, Button::LeftStick), (Control::A, Button::A), (Control::B, Button::B), (Control::X, Button::X), (Control::Y, Button::Y),
+        (Control::Lb, Button::Lb), (Control::Rb, Button::Rb), (Control::Start, Button::Start), (Control::Back, Button::Back),
+        (Control::DpadUp, Button::DpadUp), (Control::DpadDown, Button::DpadDown), (Control::DpadLeft, Button::DpadLeft), (Control::DpadRight, Button::DpadRight),
+    ];
+    // README "Any map": a trigger counts beyond 4000, a stick direction at 0.28 of full scale (9175).
+    const TRIGGER: u16 = 4000;
+    const DEADZONE: i32 = 9175;
+
+    fn reference_active(input: &InputView, control: Control) -> bool {
+        let [lx, ly] = input.left.map(i32::from);
+        let [rx, ry] = input.right.map(i32::from);
+        if let Some((_, button)) = BUTTONS.iter().find(|(c, _)| *c == control) {
+            return input.buttons & (1 << (*button as u32)) != 0;
+        }
+        match control {
+            Control::Lt => input.lt > TRIGGER,
+            Control::Rt => input.rt > TRIGGER,
+            Control::LeftUp => ly <= -DEADZONE,
+            Control::LeftDown => ly >= DEADZONE,
+            Control::LeftLeft => lx <= -DEADZONE,
+            Control::LeftRight => lx >= DEADZONE,
+            Control::RightUp => ry <= -DEADZONE,
+            Control::RightDown => ry >= DEADZONE,
+            Control::RightLeft => rx <= -DEADZONE,
+            Control::RightRight => rx >= DEADZONE,
+            _ => unreachable!(),
+        }
     }
 
-    fn armed() -> Mapper {
-        let mut m = Mapper::new(any_map_bindings());
-        assert!(m.update(&InputView::default()).is_empty());
-        m
+    fn reference_pointer(bindings: &[Binding], input: &InputView, seconds: f32) -> (i32, i32) {
+        let on = |c: Control| bindings.iter().any(|b| b.control == c && b.press == Press::Pointer);
+        let scale = |v: i16, negative: Control, positive: Control| -> f64 {
+            let v = f64::from(v);
+            let bound = if v < 0.0 { on(negative) } else { on(positive) };
+            if !bound || v.abs() < DEADZONE as f64 { 0.0 } else { v.signum() * ((v.abs() - DEADZONE as f64) / (32767.0 - DEADZONE as f64)).min(1.0) }
+        };
+        let x = scale(input.left[0], Control::LeftLeft, Control::LeftRight) + scale(input.right[0], Control::RightLeft, Control::RightRight);
+        let y = scale(input.left[1], Control::LeftUp, Control::LeftDown) + scale(input.right[1], Control::RightUp, Control::RightDown);
+        let step = 1400.0 * f64::from(seconds);
+        ((x * step).round() as i32, (y * step).round() as i32)
     }
 
-    #[test]
-    fn a_button_press_and_release_are_one_key_down_and_up() {
-        let mut m = armed();
-        let mut pad = InputView::default();
-        pad.press(Button::X, true);
-        assert_eq!(m.update(&pad), vec![Event::Down(key("q"))]);
-        assert!(m.update(&pad).is_empty());
-        pad.press(Button::X, false);
-        assert_eq!(m.update(&pad), vec![Event::Up(key("q"))]);
-        pad.press(Button::A, true);
-        assert_eq!(m.update(&pad), vec![Event::Down(Held::LeftClick)]);
+    fn axis(rng: &mut Rng) -> i16 {
+        let free = rng.next() as i16;
+        rng.pick(&[0, 0, 9174, -9174, 9175, -9175, 20000, -20000, 32767, -32767, i16::MIN, free])
     }
 
-    #[test]
-    fn triggers_press_past_their_threshold_and_sticks_press_arrows_past_the_deadzone() {
-        let mut m = armed();
-        let mut pad = InputView { rt: 4000, left: [-9174, 0], ..InputView::default() };
-        assert!(m.update(&pad).is_empty());
-        pad.rt = 4001;
-        pad.left = [-9175, 20000];
-        assert_eq!(
-            m.update(&pad),
-            vec![Event::Down(key("down")), Event::Down(key("e")), Event::Down(key("left"))]
-        );
-    }
-
-    #[test]
-    fn shared_outputs_hold_until_the_last_control_releases() {
-        let mut bindings = any_map_bindings();
-        bindings.retain(|b| b.control != Control::Y);
-        bindings.push(Binding { control: Control::Y, action: "Ability 1".into(), press: Press::Key("q".into()) });
-        let mut m = Mapper::new(bindings);
-        let mut pad = InputView::default();
-        m.update(&pad);
-        pad.press(Button::X, true);
-        pad.press(Button::Y, true);
-        assert_eq!(m.update(&pad), vec![Event::Down(key("q"))]);
-        pad.press(Button::X, false);
-        assert!(m.update(&pad).is_empty());
-        pad.press(Button::Y, false);
-        assert_eq!(m.update(&pad), vec![Event::Up(key("q"))]);
-    }
-
-    #[test]
-    fn release_all_lets_go_and_waits_for_neutral_before_pressing_again() {
-        let mut m = armed();
-        let mut pad = InputView::default();
-        pad.press(Button::Y, true);
-        m.update(&pad);
-        assert_eq!(m.release_all(), vec![Event::Up(key("w"))]);
-        assert!(m.update(&pad).is_empty(), "a held press is not replayed");
-        pad.press(Button::Y, false);
-        assert!(m.update(&pad).is_empty());
-        pad.press(Button::Y, true);
-        assert_eq!(m.update(&pad), vec![Event::Down(key("w"))]);
-    }
-
-    #[test]
-    fn a_new_mapper_ignores_a_press_held_since_before_it_started() {
-        let mut m = Mapper::new(any_map_bindings());
-        let mut pad = InputView::default();
-        pad.press(Button::X, true);
-        assert!(m.update(&pad).is_empty());
+    fn input(rng: &mut Rng) -> InputView {
+        if rng.chance(35) {
+            return InputView { left: [rng.pick(&[0, 9174, -9174]), 0], ..InputView::default() };
+        }
+        let mut view = InputView {
+            left: [axis(rng), axis(rng)],
+            right: [axis(rng), axis(rng)],
+            lt: { let free = rng.below(32768) as u16; rng.pick(&[0, 4000, 4001, 32767, free]) },
+            rt: rng.pick(&[0, 4000, 4001, 32767]),
+            buttons: 0,
+        };
+        for _ in 0..rng.below(3) {
+            view.press(rng.pick(&BUTTONS).1, true);
+        }
+        view
     }
 
     #[test]
-    fn the_right_stick_moves_the_pointer_from_zero_at_the_deadzone() {
-        let m = armed();
-        let pad = InputView { right: [9175, -32767], ..InputView::default() };
-        assert_eq!(m.pointer(&pad, 0.01), (0, -14));
-        let pad = InputView { left: [32767, 0], ..InputView::default() };
-        assert_eq!(m.pointer(&pad, 0.01), (0, 0), "the left stick is the camera");
+    fn the_mapper_agrees_with_a_reference_over_generated_bindings_and_pads() {
+        let mut rng = Rng::new(3);
+        let presses = [Press::Key("q".into()), Press::Key("w".into()), Press::LeftClick, Press::RightClick, Press::Pointer];
+        for _ in 0..cases() {
+            let bindings: Vec<Binding> = (0..1 + rng.below(6))
+                .map(|_| Binding { control: rng.pick(&CONTROLS), action: String::new(), press: rng.pick(&presses) })
+                .collect();
+            let mut mapper = Mapper::new(bindings.clone());
+            let (mut armed, mut held) = (false, BTreeSet::<Held>::new());
+            for _ in 0..16 {
+                if rng.chance(10) {
+                    assert_eq!(mapper.release_all(), held.iter().cloned().map(Event::Up).collect::<Vec<_>>());
+                    held.clear();
+                    armed = false;
+                    continue;
+                }
+                let input = input(&mut rng);
+                let events = mapper.update(&input);
+                let active: Vec<&Binding> = bindings.iter().filter(|b| reference_active(&input, b.control)).collect();
+                if !armed {
+                    if !active.is_empty() {
+                        assert!(events.is_empty(), "pressed before neutral: {events:?}");
+                        continue;
+                    }
+                    armed = true;
+                }
+                let want: BTreeSet<Held> = active.iter().filter_map(|b| match &b.press {
+                    Press::Key(name) => Some(Held::Key(name.clone())),
+                    Press::LeftClick => Some(Held::LeftClick),
+                    Press::RightClick => Some(Held::RightClick),
+                    Press::Pointer => None,
+                }).collect();
+                let mut expected: Vec<Event> = held.difference(&want).cloned().map(Event::Up).collect();
+                expected.extend(want.difference(&held).cloned().map(Event::Down));
+                assert_eq!(events, expected, "{bindings:?} {input:?}");
+                held = want;
+                assert_eq!(mapper.pointer(&input, 0.01), reference_pointer(&bindings, &input, 0.01), "{bindings:?} {input:?}");
+            }
+        }
     }
 }

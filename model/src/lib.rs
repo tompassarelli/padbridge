@@ -711,213 +711,259 @@ pub fn view(link: Link, s: &Snapshot) -> View {
 }
 
 #[cfg(test)]
-mod tests {
-    #[test]
-    fn presets_bind_their_buttons() {
-        let pressed = |preset, control| fighter_bindings_for(preset).into_iter().filter(|b| b.control == control).map(|b| b.action).collect::<Vec<_>>().join("+");
-        use Control::*;
-        let table = [
-            (PadPreset::Melee, [A, B, X, Y, Lb, Rb, Lt, Rt, LeftStick], ["Attack", "Special", "Jump", "Jump", "", "Grab", "Shield", "Shield", ""]),
-            (PadPreset::ZJump, [A, B, X, Y, Lb, Rb, Lt, Rt, LeftStick], ["Attack", "Special", "Grab", "Jump", "", "Jump", "Shield", "Shield", ""]),
-            (PadPreset::Tom, [A, B, X, Y, Lb, Rb, Lt, Rt, LeftStick], ["Attack", "Grab", "Special", "Jump", "Short hop", "Meter", "Shield", "Shield", ""]),
-            (PadPreset::Script, [A, B, X, Y, Lb, Rb, Lt, Rt, LeftStick], ["Attack", "Jump", "Special", "Jump", "Tilt", "Grab", "Shield", "Shield", "Short hop"]),
-        ];
-        for (preset, controls, actions) in table {
-            assert_eq!(controls.map(|control| pressed(preset, control)), actions.map(str::to_owned), "{}", preset.name());
-            assert_eq!(PadPreset::parse(preset.name()), Ok(preset));
-            let shields = fighter_bindings_for(preset).into_iter().filter(|b| b.action == "Shield").map(|b| (b.control, b.press)).collect::<Vec<_>>();
-            assert_eq!(shields, [(Lt, key("q")), (Rt, key("q"))], "{}", preset.name());
+pub(crate) mod rng {
+    pub struct Rng(u64);
+
+    impl Rng {
+        pub fn new(salt: u64) -> Self {
+            Self(std::env::var("PROPERTY_SEED").ok().and_then(|seed| seed.parse().ok()).unwrap_or(0x5eed_u64) ^ salt)
         }
-        assert_eq!(PadPreset::default(), PadPreset::Melee);
-        assert!(PadPreset::parse("standard").is_err());
-        let gamecube = pad_bindings(PadPreset::Melee, TriggerShields::default(), PadKind::GameCube);
-        let by_label = |label: &str| gamecube.iter().filter(|b| PadKind::GameCube.label(b.control) == label).map(|b| b.action.as_str()).collect::<Vec<_>>();
-        for (label, action) in [("A", "Attack"), ("B", "Special"), ("X", "Jump"), ("Y", "Jump"), ("Z", "Grab"), ("L", "Shield"), ("R", "Shield")] {
-            assert_eq!(by_label(label), [action], "GameCube {label}");
+        pub fn next(&mut self) -> u64 {
+            self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
+            let mut z = self.0;
+            z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+            z ^ (z >> 31)
         }
-        assert_eq!(ClientMessage::PadPreset(PadPreset::ZJump).line(), "{\"pad_preset\":\"z-jump\"}\n");
-        assert_eq!(ClientMessage::TapJump(true).line(), "{\"tap_jump\":true}\n");
+        pub fn below(&mut self, n: usize) -> usize {
+            (self.next() % n as u64) as usize
+        }
+        pub fn pick<T: Clone>(&mut self, items: &[T]) -> T {
+            items[self.below(items.len())].clone()
+        }
+        pub fn chance(&mut self, percent: u64) -> bool {
+            self.next() % 100 < percent
+        }
     }
+
+    pub fn cases() -> usize {
+        std::env::var("PROPERTY_CASES").ok().and_then(|cases| cases.parse().ok()).unwrap_or(300)
+    }
+}
+
+#[cfg(test)]
+mod properties {
+    use super::rng::{Rng, cases};
     use super::*;
 
-    #[test]
-    fn remaps_change_single_controls_and_round_trip() {
-        let mut settings = ControllerSettings::default();
-        let remaps = parse_remaps("lb=grab,rt=none,x=shield").unwrap();
-        assert!(settings.apply(&ClientMessage::Remaps(remaps.clone())));
-        let actions = |control| settings.bindings(PadKind::Xbox).into_iter().filter(|b| b.control == control).map(|b| (b.action, b.press)).collect::<Vec<_>>();
-        assert_eq!(actions(Control::Lb), [("Grab".to_owned(), key("o"))]);
-        assert_eq!(actions(Control::Rt), []);
-        assert_eq!(actions(Control::X), [("Shield".to_owned(), key("q"))]);
-        assert_eq!(actions(Control::A), [("Attack".to_owned(), key("n"))]);
-        assert_eq!(remaps_arg(&settings.remaps), "x=shield,lb=grab,rt=none");
-        assert_eq!(parse_remaps(&remaps_arg(&remaps)), Ok(remaps));
-        let saved = serde_json::to_string(&settings).unwrap();
-        assert!(saved.contains("\"remaps\":{\"x\":\"shield\",\"lb\":\"grab\",\"rt\":\"none\"}"), "{saved}");
-        assert_eq!(serde_json::from_str::<ControllerSettings>(&saved).unwrap(), settings);
-        assert_eq!(serde_json::from_str::<ControllerSettings>("{\"pad_preset\":\"tom\"}").unwrap().remaps, Remaps::new());
-        assert!(!settings.apply(&ClientMessage::parse("{\"remaps\":{\"left_up\":\"jump\"}}").unwrap()));
-        assert!(parse_remaps("left_up=jump").is_err() && parse_remaps("lb").is_err() && parse_remaps("lb=dance").is_err());
+    const CONTROLS: [Control; 23] = [
+        Control::LeftStick, Control::A, Control::B, Control::X, Control::Y, Control::Lb, Control::Rb, Control::Lt, Control::Rt,
+        Control::Start, Control::Back, Control::DpadUp, Control::DpadDown, Control::DpadLeft, Control::DpadRight,
+        Control::LeftUp, Control::LeftDown, Control::LeftLeft, Control::LeftRight, Control::RightUp, Control::RightDown, Control::RightLeft, Control::RightRight,
+    ];
+    const PRESETS: [PadPreset; 4] = [PadPreset::Melee, PadPreset::ZJump, PadPreset::Tom, PadPreset::Script];
+    const SHIELDS: [TriggerShield; 2] = [TriggerShield::Full, TriggerShield::Light];
+    const KINDS: [PadKind; 2] = [PadKind::Xbox, PadKind::GameCube];
+
+    fn remaps(rng: &mut Rng) -> Remaps {
+        (0..rng.below(5)).map(|_| (rng.pick(&REMAPPABLE), rng.pick(&Move::ALL))).collect()
     }
 
-    fn playing() -> Snapshot {
-        Snapshot {
-            settings: ControllerSettings::default(),
-            pad: Some(Pad {
-                name: "Xbox One S pad".into(),
-                id: "usb-Microsoft_Controller-event-joystick".into(),
-            }),
-            game: Some(Game { pid: 4242, window: true }),
-            session: Some(Session {
-                map: "Hero Arena".into(),
-                phase: Phase::Match,
-                player: Some(1),
-            }),
-            profile: Profile::Map,
-            choice: ProfileChoice::Auto,
-            map: Some("Hero Arena".into()),
-            output: Output { running: true, ready: true, focused: true },
-            problem: None,
+    fn settings(rng: &mut Rng) -> ControllerSettings {
+        ControllerSettings {
+            pad_preset: rng.pick(&PRESETS),
+            tap_jump: rng.chance(50),
+            triggers: TriggerShields { left: rng.pick(&SHIELDS), right: rng.pick(&SHIELDS) },
+            remaps: remaps(rng),
         }
     }
 
-    fn texts(v: &View) -> Vec<(&str, Light)> {
-        v.rows.iter().map(|r| (r.text.as_str(), r.light)).collect()
+    fn snapshot(rng: &mut Rng) -> Snapshot {
+        let profile = rng.pick(&Profile::ALL);
+        Snapshot {
+            pad: rng.chance(70).then(|| Pad { name: "Pad".into(), id: "pad-1".into() }),
+            game: rng.chance(70).then(|| Game { pid: 4242, window: rng.chance(70) }),
+            session: rng.chance(60).then(|| Session {
+                map: "Arena".into(),
+                phase: rng.pick(&[Phase::Lobby, Phase::CharacterSelect, Phase::StageSelect, Phase::Match, Phase::Results]),
+                player: rng.chance(50).then_some(2),
+            }),
+            profile,
+            choice: rng.pick(&[ProfileChoice::Auto, ProfileChoice::Map, ProfileChoice::AnyMap, ProfileChoice::Off]),
+            map: rng.chance(60).then(|| "Arena".into()),
+            output: Output { running: rng.chance(80), ready: rng.chance(80), focused: rng.chance(70) },
+            problem: rng.chance(15).then(|| "Something stopped.".into()),
+            settings: settings(rng),
+        }
     }
 
     #[test]
-    fn a_ready_match_is_all_green_in_plain_words() {
-        let v = view(Link::Connected, &playing());
-        assert_eq!(
-            texts(&v),
-            vec![
-                ("Xbox One S pad connected", Light::Green),
-                ("Running", Light::Green),
-                ("In a match as Player 1", Light::Green),
-            ]
-        );
-        assert_eq!(v.rows[2].label, "Hero Arena");
-        assert_eq!(v.overall, Light::Green);
+    fn the_view_follows_the_light_rules_for_every_generated_status() {
+        let mut rng = Rng::new(1);
+        for _ in 0..cases() * 4 {
+            let s = snapshot(&mut rng);
+            let link = rng.pick(&[Link::Off, Link::Starting, Link::Connected]);
+            let v = view(link, &s);
+            let lights = v.rows.each_ref().map(|r| r.light);
+            let expected = match link {
+                Link::Off => [Light::Off; 3],
+                Link::Starting => [Light::Amber; 3],
+                Link::Connected => {
+                    let session_ready = s.profile != Profile::Off
+                        && s.game.is_some()
+                        && !(s.profile == Profile::Map && s.session.is_none())
+                        && s.output.running && s.output.ready && s.output.focused;
+                    [
+                        if s.pad.is_some() { Light::Green } else { Light::Red },
+                        if s.game.as_ref().is_some_and(|g| g.window) { Light::Green } else { Light::Amber },
+                        if session_ready { Light::Green } else { Light::Amber },
+                    ]
+                }
+            };
+            assert_eq!(lights, expected, "{link:?} {s:?}");
+            let problem = if link == Link::Connected { s.problem.clone() } else { None };
+            assert_eq!(v.problem, problem);
+            let overall = if problem.is_some() || lights.contains(&Light::Red) {
+                Light::Red
+            } else if lights.contains(&Light::Amber) {
+                Light::Amber
+            } else if lights.contains(&Light::Off) {
+                Light::Off
+            } else {
+                Light::Green
+            };
+            assert_eq!(v.overall, overall, "{link:?} {s:?}");
+            if s.profile == Profile::Map && let Some(title) = &s.map {
+                assert_eq!(&v.rows[2].label, title);
+            }
+            for r in &v.rows {
+                let t = format!("{} {}", r.label, r.text).to_lowercase();
+                for word in ["epoch", "journal", "x11", "slot", "pid", "helper", "socket", "evdev", "service", "4242"] {
+                    assert!(!t.contains(word), "{t:?} names {word}");
+                }
+            }
+            let session = rng.chance(50);
+            let choice = s.choice;
+            let resolved = match choice {
+                ProfileChoice::Auto => if session { Profile::Map } else { Profile::AnyMap },
+                ProfileChoice::Map => Profile::Map,
+                ProfileChoice::AnyMap => Profile::AnyMap,
+                ProfileChoice::Off => Profile::Off,
+            };
+            assert_eq!(choice.resolve(session), resolved);
+        }
     }
 
     #[test]
-    fn waiting_states_are_amber_and_a_missing_pad_is_red() {
-        let mut s = playing();
-        s.session = None;
-        assert_eq!(view(Link::Connected, &s).rows[2].text, "Waiting for Hero Arena");
-        assert_eq!(view(Link::Connected, &s).overall, Light::Amber);
-        s.game = None;
-        let v = view(Link::Connected, &s);
-        assert_eq!(v.rows[1].text, "Not running");
-        assert_eq!(v.rows[2].text, "Waiting for Warcraft III");
-        s.pad = None;
-        let v = view(Link::Connected, &s);
-        assert_eq!(v.rows[0].light, Light::Red);
-        assert_eq!(v.overall, Light::Red);
-    }
+    fn settings_remaps_and_messages_round_trip() {
+        let mut rng = Rng::new(2);
+        for _ in 0..cases() {
+            let mut settings = settings(&mut rng);
+            let remaps = settings.remaps.clone();
+            assert_eq!(parse_remaps(&remaps_arg(&remaps)), Ok(remaps.clone()));
+            for preset in PRESETS {
+                assert_eq!(PadPreset::parse(preset.name()), Ok(preset));
+            }
+            for shield in SHIELDS {
+                assert_eq!(TriggerShield::parse(shield.name()), Ok(shield));
+            }
+            let saved = serde_json::to_value(&settings).unwrap();
+            assert_eq!(serde_json::from_value::<ControllerSettings>(saved.clone()).unwrap(), settings);
+            let mut partial = saved.as_object().unwrap().clone();
+            let dropped = rng.pick(&["pad_preset", "tap_jump", "triggers", "remaps"]);
+            partial.remove(dropped);
+            let loaded: ControllerSettings = serde_json::from_value(serde_json::Value::Object(partial)).unwrap();
+            let defaults = ControllerSettings::default();
+            match dropped {
+                "pad_preset" => assert_eq!(loaded.pad_preset, defaults.pad_preset),
+                "tap_jump" => assert_eq!(loaded.tap_jump, defaults.tap_jump),
+                "triggers" => assert_eq!(loaded.triggers, defaults.triggers),
+                _ => assert_eq!(loaded.remaps, defaults.remaps),
+            }
 
-    #[test]
-    fn unfocused_or_unready_output_says_what_to_do() {
-        let mut s = playing();
-        s.output.focused = false;
-        let v = view(Link::Connected, &s);
-        assert_eq!(
-            v.rows[2].text,
-            "In a match as Player 1. Click the Warcraft III window to use your controller."
-        );
-        assert_eq!(v.overall, Light::Amber);
-        s.output.ready = false;
-        assert_eq!(
-            view(Link::Connected, &s).rows[2].text,
-            "In a match as Player 1. Getting your controller ready…"
-        );
-    }
+            let unremappable = rng.pick(&[Control::LeftUp, Control::Start, Control::DpadDown, Control::RightLeft]);
+            let mut refused = remaps.clone();
+            refused.insert(unremappable, rng.pick(&Move::ALL));
+            let before = settings.clone();
+            assert!(!settings.apply(&ClientMessage::Remaps(refused.clone())));
+            assert_eq!(settings, before);
+            assert!(parse_remaps(&remaps_arg(&refused)).is_err());
+            let next = self::remaps(&mut rng);
+            assert_eq!(settings.apply(&ClientMessage::Remaps(next.clone())), next != before.remaps);
+            assert_eq!(settings.remaps, next);
+            let tap = rng.chance(50);
+            let changed = tap != settings.tap_jump;
+            assert_eq!(settings.apply(&ClientMessage::TapJump(tap)), changed);
+            assert_eq!(settings.tap_jump, tap);
 
-    #[test]
-    fn any_map_and_off_profiles_need_no_session() {
-        let mut s = playing();
-        s.session = None;
-        s.profile = Profile::AnyMap;
-        let v = view(Link::Connected, &s);
-        assert_eq!(v.rows[2].label, "Map");
-        assert_eq!(v.rows[2].text, "Your controller works in Warcraft III");
-        assert_eq!(v.overall, Light::Green);
-        s.profile = Profile::Off;
-        assert_eq!(view(Link::Connected, &s).rows[2].light, Light::Amber);
-    }
-
-    #[test]
-    fn service_off_is_grey_and_starting_is_amber_and_problems_are_red() {
-        let s = playing();
-        assert_eq!(view(Link::Off, &s).overall, Light::Off);
-        assert_eq!(view(Link::Starting, &s).overall, Light::Amber);
-        let mut s = playing();
-        s.problem = Some("Warcraft III closed during the match.".into());
-        let v = view(Link::Connected, &s);
-        assert_eq!(v.overall, Light::Red);
-        assert_eq!(v.problem.as_deref(), Some("Warcraft III closed during the match."));
-    }
-
-    #[test]
-    fn view_text_never_names_internals() {
-        let mut states = vec![playing()];
-        let mut s = playing();
-        s.output = Output::default();
-        states.push(s.clone());
-        s.session = None;
-        s.game = None;
-        s.pad = None;
-        states.push(s);
-        for link in [Link::Off, Link::Starting, Link::Connected] {
-            for s in &states {
-                for r in view(link, s).rows {
-                    let t = format!("{} {}", r.label, r.text).to_lowercase();
-                    for word in ["epoch", "journal", "x11", "slot", "pid", "helper", "socket", "evdev", "service"] {
-                        assert!(!t.contains(word), "{t:?} names {word}");
+            let kind = rng.pick(&KINDS);
+            let plain = pad_bindings(settings.pad_preset, settings.triggers, kind);
+            let bound = settings.bindings(kind);
+            for control in CONTROLS {
+                let of = |bindings: &[Binding]| bindings.iter().filter(|b| b.control == control).cloned().collect::<Vec<_>>();
+                match settings.remaps.get(&control) {
+                    None => assert_eq!(of(&bound), of(&plain), "{control:?}"),
+                    Some(Move::None) => assert!(of(&bound).is_empty(), "{control:?}"),
+                    Some(step) => {
+                        let actions = of(&bound);
+                        assert_eq!(actions.len(), 1, "{control:?}");
+                        let preset_of = |action: &str| fighter_bindings_with(PadPreset::Script, settings.triggers).into_iter().chain(fighter_bindings_with(PadPreset::Tom, settings.triggers))
+                            .find(|b| b.action == action).map(|b| b.press);
+                        let expected = match step {
+                            Move::Attack => preset_of("Attack"),
+                            Move::Special => preset_of("Special"),
+                            Move::Jump => preset_of("Jump"),
+                            Move::Grab => preset_of("Grab"),
+                            Move::Tilt => preset_of("Tilt"),
+                            Move::ShortHop => preset_of("Short hop"),
+                            Move::Meter => preset_of("Meter"),
+                            Move::Shield | Move::None => None,
+                        };
+                        if let Some(press) = expected {
+                            assert_eq!(actions[0].press, press, "{control:?} {step:?}");
+                        }
                     }
                 }
             }
-        }
-    }
+            for bindings in [bound, any_map_bindings(), menu_pointer_bindings()] {
+                let mut seen = std::collections::BTreeSet::new();
+                for b in &bindings {
+                    assert!(seen.insert(b.control), "{:?} bound twice", b.control);
+                }
+            }
+            for preset in PRESETS {
+                let triggers = TriggerShields { left: rng.pick(&SHIELDS), right: rng.pick(&SHIELDS) };
+                let printed = |kind: PadKind| -> std::collections::BTreeSet<(&'static str, String)> {
+                    pad_bindings(preset, triggers, kind).into_iter().map(|b| {
+                        let label = match (kind, kind.label(b.control)) {
+                            (PadKind::GameCube, "Z") => "RB",
+                            (PadKind::GameCube, "L") => "LT",
+                            (PadKind::GameCube, "R") => "RT",
+                            (_, label) => label,
+                        };
+                        (label, b.action)
+                    }).collect()
+                };
+                assert_eq!(printed(PadKind::GameCube), printed(PadKind::Xbox), "a GameCube pad keeps its printed letters in {}", preset.name());
+            }
 
-    #[test]
-    fn wire_lines_match_the_agreed_shape() {
-        let status = ServiceMessage::Status(playing()).line();
-        assert!(status.starts_with("{\"status\":{\"pad\":{\"name\":\"Xbox One S pad\""));
-        assert!(status.ends_with("}\n"));
-        assert_eq!(ServiceMessage::parse(&status).unwrap(), ServiceMessage::Status(playing()));
-        let mut input = InputView { left: [0, -32768], lt: 9000, ..InputView::default() };
-        input.press(Button::A, true);
-        input.press(Button::Start, true);
-        input.press(Button::Start, false);
-        assert!(input.pressed(Button::A) && !input.pressed(Button::Start));
-        assert_eq!(
-            ServiceMessage::Input(input).line(),
-            "{\"input\":{\"left\":[0,-32768],\"right\":[0,0],\"lt\":9000,\"rt\":0,\"buttons\":1}}\n"
-        );
-        assert_eq!(ClientMessage::Profile(ProfileChoice::AnyMap).line(), "{\"profile\":\"any_map\"}\n");
-        assert_eq!(
-            ClientMessage::parse("{\"profile\":\"auto\"}").unwrap(),
-            ClientMessage::Profile(ProfileChoice::Auto)
-        );
-        let bindings = ClientMessage::Bindings(any_map_bindings()).line();
-        assert!(bindings.contains("{\"control\":\"a\",\"action\":\"Select / click\",\"press\":\"left_click\"}"));
-        assert!(bindings.contains("\"press\":{\"key\":\"q\"}"));
-    }
-
-    #[test]
-    fn auto_follows_a_map_plugin_session() {
-        assert_eq!(ProfileChoice::Auto.resolve(true), Profile::Map);
-        assert_eq!(ProfileChoice::Auto.resolve(false), Profile::AnyMap);
-        assert_eq!(ProfileChoice::Off.resolve(true), Profile::Off);
-    }
-
-    #[test]
-    fn every_control_is_bound_at_most_once_per_profile() {
-        for bindings in [fighter_bindings(), any_map_bindings()] {
-            let mut seen = std::collections::BTreeSet::new();
-            for b in &bindings {
-                assert!(seen.insert(format!("{:?}", b.control)), "{:?} twice", b.control);
+            let s = snapshot(&mut rng);
+            let mut input = InputView { left: [rng.next() as i16, rng.next() as i16], right: [rng.next() as i16, 0], lt: rng.below(32768) as u16, rt: 0, buttons: 0 };
+            let mut reference = 0u32;
+            for _ in 0..6 {
+                let button = rng.pick(&[Button::A, Button::B, Button::X, Button::Y, Button::Lb, Button::Rb, Button::Start, Button::Back, Button::LeftStick, Button::RightStick, Button::DpadUp, Button::DpadDown, Button::DpadLeft, Button::DpadRight]);
+                let down = rng.chance(50);
+                input.press(button, down);
+                let bit = 1u32 << (button as u32);
+                if down { reference |= bit } else { reference &= !bit }
+                assert_eq!(input.buttons, reference);
+                assert_eq!(input.pressed(button), down);
+            }
+            for message in [ServiceMessage::Status(s), ServiceMessage::Input(input)] {
+                let line = message.line();
+                assert!(line.ends_with('\n') && line.matches('\n').count() == 1, "{line:?}");
+                assert_eq!(ServiceMessage::parse(&line).unwrap(), message);
+            }
+            for message in [
+                ClientMessage::Profile(rng.pick(&[ProfileChoice::Auto, ProfileChoice::Map, ProfileChoice::AnyMap, ProfileChoice::Off])),
+                ClientMessage::PadPreset(rng.pick(&PRESETS)),
+                ClientMessage::TapJump(rng.chance(50)),
+                ClientMessage::Remaps(self::remaps(&mut rng)),
+                ClientMessage::Bindings(any_map_bindings()),
+            ] {
+                let line = message.line();
+                assert!(line.ends_with('\n') && line.matches('\n').count() == 1, "{line:?}");
+                assert_eq!(ClientMessage::parse(&line).unwrap(), message);
             }
         }
     }

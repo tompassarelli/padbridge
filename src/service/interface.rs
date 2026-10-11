@@ -219,27 +219,77 @@ mod tests {
         assert_eq!(got, vec![ClientMessage::Profile(ProfileChoice::AnyMap)]);
     }
 
+}
+
+#[cfg(test)]
+mod properties {
+    use super::*;
+    use crate::rng::{Rng, cases};
+
+    // linux/input-event-codes.h: BTN_SOUTH 0x130, BTN_EAST 0x131, BTN_NORTH 0x133, BTN_WEST 0x134, BTN_TL 0x136,
+    // BTN_TR 0x137, BTN_SELECT 0x13a, BTN_START 0x13b, BTN_THUMBL 0x13d, BTN_THUMBR 0x13e; ABS_X 0, ABS_Y 1,
+    // ABS_Z 2, ABS_RX 3, ABS_RY 4, ABS_RZ 5, ABS_HAT0X 0x10, ABS_HAT0Y 0x11. BTN_NORTH and BTN_WEST are swapped
+    // on drivers that report by label rather than position (hid-microsoft, xpad).
+    const KEYS: [(u16, Button, Button); 10] = [
+        (0x130, Button::A, Button::A), (0x131, Button::B, Button::B), (0x133, Button::X, Button::Y), (0x134, Button::Y, Button::X),
+        (0x136, Button::Lb, Button::Lb), (0x137, Button::Rb, Button::Rb), (0x13a, Button::Back, Button::Back),
+        (0x13b, Button::Start, Button::Start), (0x13d, Button::LeftStick, Button::LeftStick), (0x13e, Button::RightStick, Button::RightStick),
+    ];
+
     #[test]
-    fn pad_events_become_the_displayed_state() {
-        let mut ranges = [(0, 0); 0x12];
-        for axis in [0, 1, 3, 4] {
-            ranges[axis] = (-32768, 32767);
+    fn kernel_events_fold_into_the_displayed_state_over_any_axis_range() {
+        let mut rng = Rng::new(8);
+        for _ in 0..cases() {
+            let mut ranges = [(0, 0); 0x12];
+            for code in [0usize, 1, 2, 3, 4, 5] {
+                let min = rng.pick(&[0, -32768, -1, 0]);
+                let max = rng.pick(&[255, 1023, 32767, 65535]);
+                ranges[code] = (min, max);
+            }
+            ranges[0x10] = (-1, 1);
+            ranges[0x11] = (-1, 1);
+            let positional = rng.chance(30);
+            let mut view = InputView::default();
+            let mut reference = InputView::default();
+            for _ in 0..20 {
+                if rng.chance(50) {
+                    let (code, label, position) = rng.pick(&KEYS);
+                    let value = rng.pick(&[0, 1, 2]);
+                    apply_event(&mut view, &ranges, positional, 1, code, value);
+                    reference.press(if positional { position } else { label }, value != 0);
+                } else {
+                    let code = rng.pick(&[0u16, 1, 2, 3, 4, 5, 0x10, 0x11, 0x08]);
+                    let (min, max) = ranges[usize::from(code).min(0x11)];
+                    let free = min + rng.below((max - min) as usize + 1) as i32;
+                    let value = if code >= 0x10 { rng.pick(&[-1, 0, 1]) } else { rng.pick(&[min, max, min + (max - min) / 2, free]) };
+                    apply_event(&mut view, &ranges, positional, 3, code, value);
+                    let unit = if max > min { f64::from(value - min) / f64::from(max - min) } else { 0.0 };
+                    let axis = ((unit * 65535.0).floor() - 32768.0) as i16;
+                    let trigger = (unit * 32767.0).floor() as u16;
+                    match code {
+                        0 => reference.left[0] = axis,
+                        1 => reference.left[1] = axis,
+                        3 => reference.right[0] = axis,
+                        4 => reference.right[1] = axis,
+                        2 => reference.lt = trigger,
+                        5 => reference.rt = trigger,
+                        0x10 => { reference.press(Button::DpadLeft, value < 0); reference.press(Button::DpadRight, value > 0); }
+                        0x11 => { reference.press(Button::DpadUp, value < 0); reference.press(Button::DpadDown, value > 0); }
+                        _ => {}
+                    }
+                    for (axis, expected) in [(view.left[0], reference.left[0]), (view.left[1], reference.left[1]), (view.right[0], reference.right[0]), (view.right[1], reference.right[1])] {
+                        assert!((i32::from(axis) - i32::from(expected)).abs() <= 1, "{code} {value} {ranges:?}: {axis} vs {expected}");
+                    }
+                    for (trigger, expected) in [(view.lt, reference.lt), (view.rt, reference.rt)] {
+                        assert!((i32::from(trigger) - i32::from(expected)).abs() <= 1, "{code} {value}: {trigger} vs {expected}");
+                    }
+                    reference.left = view.left;
+                    reference.right = view.right;
+                    reference.lt = view.lt;
+                    reference.rt = view.rt;
+                }
+                assert_eq!(view.buttons, reference.buttons);
+            }
         }
-        ranges[2] = (0, 1023);
-        ranges[5] = (0, 1023);
-        ranges[0x10] = (-1, 1);
-        let mut view = InputView::default();
-        apply_event(&mut view, &ranges, false, 3, 1, -32768);
-        apply_event(&mut view, &ranges, false, 3, 5, 1023);
-        apply_event(&mut view, &ranges, false, 1, 0x133, 1);
-        apply_event(&mut view, &ranges, false, 3, 0x10, -1);
-        assert_eq!(view.left, [0, -32768]);
-        assert_eq!(view.rt, 32767);
-        assert!(view.pressed(Button::X) && view.pressed(Button::DpadLeft));
-        apply_event(&mut view, &ranges, false, 1, 0x133, 0);
-        apply_event(&mut view, &ranges, true, 1, 0x133, 1);
-        assert!(!view.pressed(Button::X) && view.pressed(Button::Y));
-        apply_event(&mut view, &ranges, false, 3, 2, 0);
-        assert_eq!(view.lt, 0);
     }
 }

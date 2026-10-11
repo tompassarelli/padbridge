@@ -60,13 +60,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn clamped_pad_keeps_neutral_half_full_and_trigger_pressure() {
-        assert_eq!(Pad::quantize([9174, -9174], 4000, 0), Pad::default());
-        assert_eq!(Pad::quantize([16384, -32767], 10000, 32767), Pad { x: 62, z: 127, left: 77, right: 255 });
-        assert_eq!(Pad::quantize([-32767, 9175], 22000, 0), Pad { x: -127, z: -36, left: 166, right: 0 });
-    }
-
-    #[test]
     fn every_level_roundtrips_through_keys_and_cursor_cells() {
         for x in AXIS_LEVELS { for z in AXIS_LEVELS { for left in TRIGGER_LEVELS { for right in TRIGGER_LEVELS {
             let pad = Pad { x, z, left, right };
@@ -77,5 +70,40 @@ mod tests {
         } } } }
         assert_eq!(Pad { x: -62, z: 127, left: 77, right: 255 }.packed(), Some(13829));
         assert_eq!(Pad::unpack(31), None);
+    }
+}
+
+#[cfg(test)]
+mod properties {
+    use super::*;
+    use crate::rng::{Rng, cases};
+
+    // The helper's deadzone (0.28 of full scale) and trigger threshold; levels round to the nearest of seven steps.
+    fn reference_axis(raw: i16) -> i8 {
+        let value = i32::from(raw).clamp(-32767, 32767);
+        if value.abs() < 9175 { return 0; }
+        let level = ((value.abs() - 9175) as f64 * 7.0 / 23592.0).round() as usize;
+        if value < 0 { AXIS_LEVELS[7 - level] } else { AXIS_LEVELS[9 + level] }
+    }
+
+    #[test]
+    fn quantize_rounds_to_the_nearest_level_outside_the_deadzone() {
+        let mut rng = Rng::new(4);
+        for _ in 0..cases() * 20 {
+            let (free, x, t) = (rng.next() as i16, rng.next() as i16, rng.below(32768) as u16);
+            let raw = [x, rng.pick(&[0, 9174, 9175, -9175, 32767, i16::MIN, free])];
+            let triggers = [rng.pick(&[0, 4000, 4001, 32767, t]), rng.below(65536) as u16];
+            let pad = Pad::quantize(raw, triggers[0], triggers[1]);
+            assert_eq!(pad.x, reference_axis(raw[0]), "{raw:?}");
+            assert_eq!(pad.z, reference_axis(raw[1].saturating_neg()), "{raw:?} z is up");
+            for (level, raw) in [(pad.left, triggers[0]), (pad.right, triggers[1])] {
+                let expected = if raw <= 4000 { 0 } else {
+                    let value = i32::from(raw.min(32767)) * 255 / 32767;
+                    if value * 2 <= 77 + 166 { 77 } else if value * 2 <= 166 + 255 { 166 } else { 255 }
+                };
+                assert_eq!(level, expected, "{raw}");
+            }
+            assert!(pad.packed().is_some());
+        }
     }
 }

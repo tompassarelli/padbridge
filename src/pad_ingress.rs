@@ -149,33 +149,84 @@ pub fn calibrate(grid: CursorGrid, end: bool, down: bool, out: &mut dyn Output) 
 }
 
 #[cfg(test)]
-mod tests {
+mod properties {
     use super::*;
+    use crate::rng::{Rng, cases};
+    use std::collections::BTreeSet;
+
     #[derive(Default)]
-    struct Recorded(Vec<(String, bool)>);
+    struct Recorded {
+        down: BTreeSet<String>,
+        events: Vec<(String, bool)>,
+        cursor: Option<(f64, f64)>,
+    }
+
     impl Output for Recorded {
-        fn key(&mut self, name: &str, down: bool) -> Result<(), String> { self.0.push((name.into(), down)); Ok(()) }
-        fn cursor(&mut self, _: f64, _: f64, _: u32, _: u32) -> Result<(), String> { Ok(()) }
+        fn key(&mut self, name: &str, down: bool) -> Result<(), String> {
+            if down {
+                assert!(self.down.insert(name.into()), "{name} pressed twice");
+            } else {
+                assert!(self.down.remove(name), "{name} released while up");
+            }
+            if KEY_NAMES.contains(&name) {
+                assert!(!self.down.contains(ACTIVE_KEY), "{name} changed while the marker is held");
+            }
+            self.events.push((name.into(), down));
+            Ok(())
+        }
+        fn cursor(&mut self, x: f64, y: f64, _: u32, _: u32) -> Result<(), String> {
+            self.cursor = Some((x, y));
+            Ok(())
+        }
     }
 
     #[test]
-    fn keys_change_only_different_bits_and_cleanup_releases_every_owned_key() {
-        let (mut ingress, mut out) = (Ingress::new(Route::Keys), Recorded::default());
-        ingress.update(&Sample::default(), true, &mut out).unwrap();
-        assert_eq!(out.0.last(), Some(&(ACTIVE_KEY.into(), true)));
-        out.0.clear();
-        ingress.update(&Sample::default(), true, &mut out).unwrap();
-        assert!(out.0.is_empty());
-        ingress.update(&Sample { left_x: 16384, right_trigger: 32767, ..Sample::default() }, true, &mut out).unwrap();
-        assert_eq!(out.0.first(), Some(&(ACTIVE_KEY.into(), false)));
-        assert_eq!(out.0.last(), Some(&(ACTIVE_KEY.into(), true)));
-        assert!(!out.0.iter().any(|(key, _)| key == PRESENT_KEY));
-        ingress.update(&Sample::default(), false, &mut out).unwrap();
-        assert_eq!(ingress.held, 0);
-        assert!(!ingress.active);
-        assert!(!ingress.present);
-        out.0.clear();
-        ingress.release(&mut out).unwrap();
-        assert!(out.0.is_empty());
+    fn held_keys_always_spell_the_quantized_pad_and_cleanup_releases_them_all() {
+        let mut rng = Rng::new(7);
+        let grid = CursorGrid { x: 10.0, y: 20.0, width: 127.0, height: 254.0, screen_width: 1920, screen_height: 1080 };
+        for _ in 0..cases() {
+            let route = rng.pick(&[Route::Digital, Route::Keys, Route::Cursor(grid)]);
+            let (mut ingress, mut out) = (Ingress::new(route), Recorded::default());
+            let mut last = None;
+            for _ in 0..20 {
+                out.events.clear();
+                if rng.chance(10) {
+                    ingress.release(&mut out).unwrap();
+                    assert!(out.down.is_empty(), "{:?}", out.down);
+                    last = None;
+                    continue;
+                }
+                let axis = |rng: &mut Rng| { let free = rng.next() as i16; rng.pick(&[0, 0, 9174, 16384, -32767, free]) };
+                let sample = Sample { left_x: axis(&mut rng), left_y: axis(&mut rng), left_trigger: rng.pick(&[0, 20000, 32767, -5]), right_trigger: rng.pick(&[0, 32767]), ..Sample::default() };
+                let eligible = rng.chance(85);
+                ingress.update(&sample, eligible, &mut out).unwrap();
+                if route == Route::Digital {
+                    assert!(out.events.is_empty());
+                    continue;
+                }
+                if !eligible {
+                    assert!(out.down.is_empty(), "{:?}", out.down);
+                    last = None;
+                    continue;
+                }
+                let (x, y) = crate::stick::melee_stick(sample.left_x, sample.left_y);
+                let pad = Pad::quantize([x, y], sample.left_trigger.max(0) as u16, sample.right_trigger.max(0) as u16);
+                let payload = pad.packed().unwrap();
+                let mut expected: BTreeSet<String> = [PRESENT_KEY.to_owned(), ACTIVE_KEY.to_owned()].into();
+                if route == Route::Keys {
+                    expected.extend(KEY_NAMES.iter().enumerate().filter(|(bit, _)| payload & (1 << bit) != 0).map(|(_, name)| name.to_string()));
+                }
+                assert_eq!(out.down, expected, "{sample:?}");
+                if last == Some(payload) {
+                    assert!(out.events.is_empty(), "an unchanged pad sent {:?}", out.events);
+                    assert_eq!(out.cursor, None);
+                } else if let Route::Cursor(grid) = route {
+                    let (cx, cy) = pad.cursor_cell().unwrap();
+                    let point = (grid.x + f64::from(cx) * grid.width / 127.0, grid.y + f64::from(cy) * grid.height / 127.0);
+                    assert_eq!(out.cursor.take(), Some(point));
+                }
+                last = Some(payload);
+            }
+        }
     }
 }

@@ -112,25 +112,6 @@ impl Action {
     }
 }
 
-#[cfg(test)]
-mod short_hop_tests {
-    use super::*;
-
-    #[test]
-    fn short_hop_button_emits_z_and_releases_on_focus_loss_spec_321() {
-        for (preset, button) in [(model::PadPreset::Tom, Button::LeftShoulder), (model::PadPreset::Script, Button::LeftStick)] {
-            let mut mapper = EventMapper::new(preset);
-            mapper.resync(&Sample::default(), true);
-            let event = CapturedInput { capture_ns: 1, control: Control::Button(button), value: InputValue::Button(true) };
-            let edges = mapper.apply(event, true);
-            assert_eq!(edges, vec![Transition { action: Action::ShortHop, pressed: true }]);
-            assert_eq!(edges[0].action.key(), 'z');
-            assert!(mapper.apply(event, true).is_empty());
-            assert_eq!(mapper.disarm(), vec![Transition { action: Action::ShortHop, pressed: false }]);
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Transition {
     pub action: Action,
@@ -391,425 +372,296 @@ impl Mapper {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod rng {
+    pub struct Rng(u64);
+
+    impl Rng {
+        pub fn new(salt: u64) -> Self {
+            Self(std::env::var("PROPERTY_SEED").ok().and_then(|seed| seed.parse().ok()).unwrap_or(0x5eed_u64) ^ salt)
+        }
+        pub fn next(&mut self) -> u64 {
+            self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
+            let mut z = self.0;
+            z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+            z ^ (z >> 31)
+        }
+        pub fn below(&mut self, n: usize) -> usize {
+            (self.next() % n as u64) as usize
+        }
+        pub fn pick<T: Clone>(&mut self, items: &[T]) -> T {
+            items[self.below(items.len())].clone()
+        }
+        pub fn chance(&mut self, percent: u64) -> bool {
+            self.next() % 100 < percent
+        }
+    }
+
+    pub fn cases() -> usize {
+        std::env::var("PROPERTY_CASES").ok().and_then(|cases| cases.parse().ok()).unwrap_or(300)
+    }
+}
+
+#[cfg(test)]
+mod properties {
+    use super::rng::{Rng, cases};
     use super::*;
-    use sdl3::joystick::JoystickId;
-    fn tick(map: &mut Mapper, sample: &Sample) -> Vec<Transition> {
-        map.update(Some(sample), true)
-    }
-    fn edge(action: Action, pressed: bool) -> Transition {
-        Transition { action, pressed }
-    }
-    fn armed() -> Mapper {
-        let mut map = Mapper::default();
-        tick(&mut map, &Sample::default());
-        map
+    use model::{Control as Pad, Move, PadKind, PadPreset, TriggerShield, TriggerShields};
+
+    const PRESETS: [PadPreset; 4] = [PadPreset::Melee, PadPreset::ZJump, PadPreset::Tom, PadPreset::Script];
+    const SHIELDS: [TriggerShield; 2] = [TriggerShield::Full, TriggerShield::Light];
+    const REMAPPABLE: [Pad; 9] = [Pad::A, Pad::B, Pad::X, Pad::Y, Pad::Lb, Pad::Rb, Pad::Lt, Pad::Rt, Pad::LeftStick];
+
+    struct Config {
+        preset: PadPreset,
+        tap_jump: bool,
+        triggers: TriggerShields,
+        kind: PadKind,
+        remaps: model::Remaps,
     }
 
-    #[test]
-    fn optional_tap_jump_escapes_shield_but_tilt_caps_only_stick_jump() {
-        let mut mapper = Mapper::new(model::PadPreset::Script);
-        tick(&mut mapper, &Sample::default());
-        let mut sample = Sample { left_trigger: 20_000, left_y: -32_767, ..Sample::default() };
-        assert!(!tick(&mut mapper, &sample).contains(&edge(Action::Jump, true)));
-        mapper.set_tap_jump(true);
-        assert!(tick(&mut mapper, &sample).contains(&edge(Action::Jump, true)));
-        sample.lb = true;
-        assert!(tick(&mut mapper, &sample).contains(&edge(Action::Jump, false)));
-        sample.y = true;
-        assert!(tick(&mut mapper, &sample).contains(&edge(Action::Jump, true)));
-        sample.y = false;
-        assert!(tick(&mut mapper, &sample).contains(&edge(Action::Jump, false)));
-        sample.left_trigger = 0;
-        assert!(tick(&mut mapper, &sample).contains(&edge(Action::Jump, true)));
-        assert!(!stick::tap_jump(-21_708, true, false, true));
-        assert!(stick::tap_jump(-21_709, true, false, true));
-        assert!(!stick::tap_jump(-32_767, true, true, true));
-    }
-
-    #[test]
-    fn z_jump_uses_rb_and_y_for_jump_and_x_for_grab() {
-        let mut map = Mapper::new(model::PadPreset::ZJump);
-        tick(&mut map, &Sample::default());
-        let mut sample = Sample { rb: true, ..Sample::default() };
-        assert_eq!(tick(&mut map, &sample), vec![edge(Action::Jump, true)]);
-        sample.y = true;
-        assert!(tick(&mut map, &sample).is_empty());
-        sample.rb = false;
-        assert!(tick(&mut map, &sample).is_empty());
-        sample.x = true;
-        assert_eq!(tick(&mut map, &sample), vec![edge(Action::Grab, true)]);
-        sample.y = false;
-        assert_eq!(tick(&mut map, &sample), vec![edge(Action::Jump, false)]);
-    }
-
-    #[test]
-    fn light_and_full_shield_hold_independently() {
-        let mut map = armed();
-        map.set_trigger_shields(model::TriggerShields { left: model::TriggerShield::Light, ..model::TriggerShields::default() });
-        let mut s = Sample {
-            left_trigger: 20000,
-            ..Sample::default()
+    /// The README's fighter layout per preset, by Xbox position.
+    fn reference_buttons(config: &Config) -> Vec<(Pad, Action)> {
+        use Action::*;
+        let shield = |control: Pad| {
+            let mode = match control { Pad::Lt => config.triggers.left, Pad::Rt => config.triggers.right, _ => TriggerShield::Full };
+            match (control, mode) {
+                (_, TriggerShield::Light) => LightShield,
+                _ => Shield,
+            }
         };
-        assert_eq!(tick(&mut map, &s), vec![edge(Action::LightShield, true)]);
-        s.right_trigger = 30000;
-        assert_eq!(tick(&mut map, &s), vec![edge(Action::Shield, true)]);
-        s.left_trigger = 0;
-        assert_eq!(tick(&mut map, &s), vec![edge(Action::LightShield, false)]);
-        s.right_trigger = 0;
-        assert_eq!(tick(&mut map, &s), vec![edge(Action::Shield, false)]);
-    }
-
-    #[test]
-    fn jump_buttons_share_one_held_jump_and_stick_up_is_only_up() {
-        let mut map = armed();
-        let mut s = Sample {
-            x: true,
-            y: true,
-            left_y: -20000,
-            ..Sample::default()
+        let mut table: Vec<(Pad, Action)> = match config.preset {
+            PadPreset::Melee => vec![(Pad::A, Attack), (Pad::B, Special), (Pad::X, Jump), (Pad::Y, Jump), (Pad::Rb, Grab)],
+            PadPreset::ZJump => vec![(Pad::A, Attack), (Pad::B, Special), (Pad::X, Grab), (Pad::Y, Jump), (Pad::Rb, Jump)],
+            PadPreset::Tom => vec![(Pad::A, Attack), (Pad::B, Grab), (Pad::X, Special), (Pad::Y, Jump), (Pad::Lb, ShortHop), (Pad::Rb, Meter)],
+            PadPreset::Script => vec![(Pad::A, Attack), (Pad::X, Special), (Pad::B, Jump), (Pad::Y, Jump), (Pad::LeftStick, ShortHop), (Pad::Rb, Grab), (Pad::Lb, Walk)],
         };
-        assert_eq!(
-            tick(&mut map, &s),
-            vec![edge(Action::Jump, true), edge(Action::Up, true)]
-        );
-        s.x = false;
-        assert!(tick(&mut map, &s).is_empty());
-        s.y = false;
-        assert_eq!(tick(&mut map, &s), vec![edge(Action::Jump, false)]);
-        s.left_y = 0;
-        assert_eq!(tick(&mut map, &s), vec![edge(Action::Up, false)]);
-        s.left_y = i16::MIN;
-        assert_eq!(tick(&mut map, &s), vec![edge(Action::Up, true)]);
+        table.extend([(Pad::Lt, shield(Pad::Lt)), (Pad::Rt, shield(Pad::Rt)), (Pad::Start, Start)]);
+        if config.kind == PadKind::GameCube {
+            for (control, _) in &mut table {
+                *control = match *control { Pad::B => Pad::X, Pad::X => Pad::B, other => other };
+            }
+        }
+        table.retain(|(control, _)| !config.remaps.contains_key(control));
+        table.extend(config.remaps.iter().filter_map(|(&control, step)| Some((control, match step {
+            Move::Attack => Attack,
+            Move::Special => Special,
+            Move::Jump => Jump,
+            Move::Grab => Grab,
+            Move::Shield => shield(control),
+            Move::Tilt => Walk,
+            Move::ShortHop => ShortHop,
+            Move::Meter => Meter,
+            Move::None => return None,
+        }))));
+        table
     }
 
-    #[test]
-    fn drifted_stick_inside_melee_deadzone_is_neutral_and_just_outside_moves() {
-        let mut map = armed();
-        let drift = Sample {
-            left_x: 9_174,
-            left_y: -9_174,
-            ..Sample::default()
+    fn reference_neutral(s: &Sample) -> bool {
+        stick::melee_stick(s.left_x, s.left_y) == (0, 0)
+            && stick::c_stick(s.right_x, s.right_y) == (0, 0)
+            && s.left_trigger <= 4000
+            && s.right_trigger <= 4000
+            && !(s.a || s.b || s.x || s.y || s.lb || s.rb || s.start || s.left_stick)
+    }
+
+    /// What the fighter layout holds for an armed pad: buttons by the table, the
+    /// left stick through Melee's clamp, deadzone and down threshold, the right
+    /// stick at the C-stick flick thresholds, and stick jump above 0.6625 up
+    /// (capped at 0.65 while tilt and shield are both held).
+    fn reference_held(config: &Config, s: &Sample) -> BTreeSet<Action> {
+        let down = |control: Pad| match control {
+            Pad::A => s.a, Pad::B => s.b, Pad::X => s.x, Pad::Y => s.y, Pad::Lb => s.lb, Pad::Rb => s.rb,
+            Pad::Start => s.start, Pad::LeftStick => s.left_stick,
+            Pad::Lt => s.left_trigger > 4000, Pad::Rt => s.right_trigger > 4000,
+            _ => false,
         };
-        assert!(drift.neutral());
-        assert!(tick(&mut map, &drift).is_empty());
-        let outside = Sample {
-            left_x: 9_175,
-            ..Sample::default()
-        };
-        assert!(!outside.neutral());
-        assert_eq!(tick(&mut map, &outside), vec![edge(Action::Right, true)]);
+        let mut held: BTreeSet<Action> = reference_buttons(config).into_iter().filter(|(c, _)| down(*c)).map(|(_, a)| a).collect();
+        let (lx, ly) = stick::melee_stick(s.left_x, s.left_y);
+        let (rx, ry) = stick::c_stick(s.right_x, s.right_y);
+        let tilt = held.contains(&Action::Walk);
+        let shield = [Action::Shield, Action::LightShield].iter().any(|a| held.contains(a));
+        let up = -f32::from(ly) / 32_767.0;
+        let up = if tilt && shield { up.min(0.65) } else { up };
+        let directions = [
+            (Action::Jump, config.tap_jump && up > 0.6625),
+            (Action::Walk, config.preset == PadPreset::Tom && (rx, ry) != (0, 0)),
+            (Action::Left, lx < 0),
+            (Action::Right, lx > 0),
+            (Action::Down, stick::stick_down(ly)),
+            (Action::Up, ly < 0),
+            (Action::CLeft, rx < 0),
+            (Action::CRight, rx > 0),
+            (Action::CUp, ry < 0),
+            (Action::CDown, ry > 0),
+        ];
+        held.extend(directions.into_iter().filter(|(_, on)| *on).map(|(a, _)| a));
+        held
     }
 
-    #[test]
-    fn down_needs_melees_strong_threshold_while_other_directions_keep_the_deadzone() {
-        let mut map = armed();
-        let stick = |left_x, left_y| Sample {
-            left_x,
-            left_y,
-            ..Sample::default()
-        };
-        assert!(tick(&mut map, &stick(0, 16_384)).is_empty());
-        assert_eq!(
-            tick(&mut map, &stick(0, 22_937)),
-            vec![edge(Action::Down, true)]
-        );
-        assert_eq!(
-            tick(&mut map, &stick(0, 16_384)),
-            vec![edge(Action::Down, false)]
-        );
-        assert_eq!(
-            tick(&mut map, &stick(16_384, 0)),
-            vec![edge(Action::Right, true)]
-        );
-        assert_eq!(
-            tick(&mut map, &stick(0, -16_384)),
-            vec![edge(Action::Right, false), edge(Action::Up, true)]
-        );
+    fn diff(held: &BTreeSet<Action>, next: &BTreeSet<Action>) -> Vec<Transition> {
+        let mut edges: Vec<Transition> = held.difference(next).map(|&action| Transition { action, pressed: false }).collect();
+        edges.extend(next.difference(held).map(|&action| Transition { action, pressed: true }));
+        edges
     }
 
-    #[test]
-    fn c_stick_presses_at_melees_smash_flick_thresholds() {
-        let mut map = armed();
-        let stick = |right_x, right_y| Sample {
-            right_x,
-            right_y,
-            ..Sample::default()
-        };
-        // 0.5 and 0.7 sideways are below 0.8; 0.6 and 0.7 vertical straddle 0.6625.
-        assert!(tick(&mut map, &stick(16_384, 0)).is_empty());
-        assert!(tick(&mut map, &stick(22_937, 0)).is_empty());
-        assert!(tick(&mut map, &stick(0, -19_660)).is_empty());
-        assert_eq!(tick(&mut map, &stick(0, -22_937)), vec![edge(Action::CUp, true)]);
-        assert_eq!(
-            tick(&mut map, &stick(0, 22_937)),
-            vec![edge(Action::CUp, false), edge(Action::CDown, true)]
-        );
-        assert_eq!(
-            tick(&mut map, &stick(-27_000, 0)),
-            vec![edge(Action::CDown, false), edge(Action::CLeft, true)]
-        );
-        assert!(stick(22_937, 0).neutral());
-        assert!(!stick(27_000, 0).neutral());
+    fn axis(rng: &mut Rng) -> i16 {
+        let free = rng.next() as i16;
+        rng.pick(&[0, 0, 0, 9174, -9174, 9175, 16384, -16384, 19660, -19660, 21708, -21708, 21709, -21709, 22937, -22937, 26500, -26500, 32767, i16::MIN, free])
     }
 
-    #[test]
-    fn tom_right_stick_holds_tilt_with_the_c_stick_key_so_the_map_tilts_on_the_ground_and_throws_aerials() {
-        let stick = |right_x| Sample { right_x, ..Sample::default() };
-        let mut tom = Mapper::new(model::PadPreset::Tom);
-        tick(&mut tom, &Sample::default());
-        assert_eq!(tick(&mut tom, &stick(32_767)), vec![edge(Action::Walk, true), edge(Action::CRight, true)]);
-        assert_eq!(tick(&mut tom, &Sample::default()), vec![edge(Action::Walk, false), edge(Action::CRight, false)]);
-        let mut melee = armed();
-        assert_eq!(tick(&mut melee, &stick(32_767)), vec![edge(Action::CRight, true)]);
+    fn trigger(rng: &mut Rng) -> i16 {
+        rng.pick(&[0, 0, 4000, 4001, 20000, 32767])
     }
 
-    #[test]
-    fn focus_loss_and_disconnect_release_once_then_require_neutral() {
-        for disconnect in [false, true] {
-            let mut map = armed();
-            let held = Sample {
-                a: true,
-                left_trigger: 20000,
-                ..Sample::default()
-            };
-            tick(&mut map, &held);
-            assert_eq!(
-                map.update(if disconnect { None } else { Some(&held) }, disconnect),
-                vec![edge(Action::Attack, false), edge(Action::Shield, false)]
-            );
-            assert!(!map.armed());
-            assert!(tick(&mut map, &held).is_empty());
-            assert!(!map.armed());
-            tick(&mut map, &Sample::default());
-            assert!(map.armed());
-            assert_eq!(
-                tick(&mut map, &held),
-                vec![edge(Action::Attack, true), edge(Action::Shield, true)]
-            );
+    fn sample(rng: &mut Rng) -> Sample {
+        if rng.chance(40) {
+            return Sample { left_x: rng.pick(&[0, 9174, -9174]), right_x: rng.pick(&[0, 16384, 22937]), right_y: rng.pick(&[0, 22937]), ..Sample::default() };
+        }
+        if rng.chance(25) {
+            return Sample { left_y: rng.pick(&[-32767, -22500]), left_trigger: 20000, lb: rng.chance(70), right_x: rng.pick(&[0, 32767]), ..Sample::default() };
+        }
+        Sample {
+            left_x: axis(rng), left_y: axis(rng), right_x: axis(rng), right_y: axis(rng),
+            left_trigger: trigger(rng), right_trigger: trigger(rng),
+            a: rng.chance(20), b: rng.chance(20), x: rng.chance(20), y: rng.chance(20),
+            lb: rng.chance(20), rb: rng.chance(20), start: rng.chance(10), left_stick: rng.chance(10),
         }
     }
 
-    #[test]
-    fn startup_held_input_cannot_arm_and_extreme_axis_is_safe() {
-        let mut map = Mapper::default();
-        let s = Sample {
-            left_x: i16::MIN,
-            ..Sample::default()
-        };
-        assert!(!s.neutral());
-        assert!(tick(&mut map, &s).is_empty());
-        assert!(!map.armed());
+    fn key_name(action: Action) -> String {
+        match action.key() { ' ' => "space".to_owned(), key => key.to_string() }
     }
 
     #[test]
-    fn buttons_and_stick_directions_match_requested_keys() {
-        let mut map = armed();
-        let s = Sample {
-            a: true,
-            b: true,
-            rb: true,
-            start: true,
-            left_x: -20000,
-            left_y: 22000,
-            right_x: 26_500,
-            left_trigger: 20_000,
-            ..Sample::default()
-        };
-        let keys: BTreeSet<_> = tick(&mut map, &s).iter().map(|t| t.action.key()).collect();
-        assert_eq!(
-            keys,
-            ['n', 'u', 'o', 'y', 'w', 'e', 'm', 'q']
-                .into_iter()
-                .collect()
-        );
-        assert_eq!(Action::Right.key(), 'r');
-        assert_eq!(Action::CLeft.key(), 'b');
-        assert_eq!(Action::CDown.key(), 'h');
-    }
-
-    fn button(timestamp: u64, which: u32, button: Button, down: bool) -> Event {
-        if down {
-            Event::GamepadButtonDown {
-                timestamp,
-                which: JoystickId::from(which),
-                button,
-            }
-        } else {
-            Event::GamepadButtonUp {
-                timestamp,
-                which: JoystickId::from(which),
-                button,
-            }
-        }
-    }
-
-    fn axis(timestamp: u64, which: u32, axis: Axis, value: i16) -> Event {
-        Event::GamepadAxisMotion {
-            timestamp,
-            which: JoystickId::from(which),
-            axis,
-            value,
-        }
-    }
-
-    fn capture(mapper: &mut EventMapper, event: &Event, selected: u32) -> Vec<Transition> {
-        selected_input(event, JoystickId::from(selected))
-            .map(|input| mapper.apply(input, true))
-            .unwrap_or_default()
-    }
-
-    #[test]
-    fn same_batch_button_down_and_up_remain_two_ordered_edges() {
-        let mut mapper = EventMapper::default();
-        mapper.resync(&Sample::default(), true);
-        let down = button(10, 1, Button::South, true);
-        let up = button(11, 1, Button::South, false);
-        assert_eq!(
-            selected_input(&down, JoystickId::from(1))
-                .unwrap()
-                .capture_ns,
-            10
-        );
-        assert_eq!(
-            capture(&mut mapper, &down, 1),
-            vec![edge(Action::Attack, true)]
-        );
-        assert_eq!(
-            capture(&mut mapper, &up, 1),
-            vec![edge(Action::Attack, false)]
-        );
-    }
-
-    #[test]
-    fn axis_excursion_and_return_in_one_batch_remain_two_edges() {
-        let mut mapper = EventMapper::default();
-        mapper.resync(&Sample::default(), true);
-        let out = axis(20, 1, Axis::LeftX, 20_000);
-        let home = axis(21, 1, Axis::LeftX, 0);
-        assert_eq!(
-            capture(&mut mapper, &out, 1),
-            vec![edge(Action::Right, true)]
-        );
-        assert_eq!(
-            capture(&mut mapper, &home, 1),
-            vec![edge(Action::Right, false)]
-        );
-    }
-
-    #[test]
-    fn unrelated_gamepad_events_do_not_enter_selected_history() {
-        let mut mapper = EventMapper::default();
-        mapper.resync(&Sample::default(), true);
-        let event = button(30, 2, Button::South, true);
-        assert!(selected_input(&event, JoystickId::from(1)).is_none());
-        assert!(capture(&mut mapper, &event, 1).is_empty());
-        let selected_event = button(31, 1, Button::South, true);
-        assert_eq!(
-            capture(&mut mapper, &selected_event, 1),
-            vec![edge(Action::Attack, true)]
-        );
-    }
-
-    #[test]
-    fn overlapping_jump_and_shield_sources_keep_the_union_held() {
-        let mut mapper = EventMapper::default();
-        mapper.resync(&Sample::default(), true);
-        assert_eq!(
-            capture(&mut mapper, &button(1, 1, Button::West, true), 1),
-            vec![edge(Action::Jump, true)]
-        );
-        assert!(capture(&mut mapper, &button(2, 1, Button::North, true), 1).is_empty());
-        assert!(capture(&mut mapper, &button(3, 1, Button::West, false), 1).is_empty());
-        assert_eq!(
-            capture(&mut mapper, &button(4, 1, Button::North, false), 1),
-            vec![edge(Action::Jump, false)]
-        );
-    }
-
-    #[test]
-    fn remaps_replace_single_buttons_on_top_of_the_preset() {
-        let mut map = Mapper::new(model::PadPreset::Melee);
-        map.set_remaps(model::parse_remaps("lb=grab,rb=none,y=shield").unwrap());
-        tick(&mut map, &Sample::default());
-        let press = |map: &mut Mapper, sample: Sample| { let edges = tick(map, &sample); tick(map, &Sample::default()); edges };
-        assert_eq!(press(&mut map, Sample { lb: true, ..Sample::default() }), vec![edge(Action::Grab, true)]);
-        assert!(press(&mut map, Sample { rb: true, ..Sample::default() }).is_empty());
-        assert_eq!(press(&mut map, Sample { y: true, ..Sample::default() }), vec![edge(Action::Shield, true)]);
-        assert_eq!(press(&mut map, Sample { x: true, ..Sample::default() }), vec![edge(Action::Jump, true)]);
-    }
-
-    #[test]
-    fn presets_map_their_buttons_and_all_four_trigger_choices() {
-        use model::{PadKind, PadPreset, TriggerShield, TriggerShields};
-        let action = |mode| if mode == TriggerShield::Full { Action::Shield } else { Action::LightShield };
-        let right_action = action;
-        let presses = |preset, kind| -> Vec<(Sample, Action)> {
-            let (x, b) = (Sample { x: true, ..Sample::default() }, Sample { b: true, ..Sample::default() });
-            let (b, x) = if kind == PadKind::GameCube { (x, b) } else { (b, x) };
-            let (rb, lb) = (Sample { rb: true, ..Sample::default() }, Sample { lb: true, ..Sample::default() });
-            match preset {
-                PadPreset::Melee => vec![(b, Action::Special), (x, Action::Jump), (rb, Action::Grab)],
-                PadPreset::ZJump => vec![(b, Action::Special), (x, Action::Grab), (rb, Action::Jump)],
-                PadPreset::Tom => vec![(b, Action::Grab), (x, Action::Special), (lb, Action::ShortHop), (rb, Action::Meter)],
-                PadPreset::Script => vec![(b, Action::Jump), (x, Action::Special), (lb, Action::Walk), (rb, Action::Grab),
-                    (Sample { left_stick: true, ..Sample::default() }, Action::ShortHop)],
-            }
-        };
-        for preset in PadPreset::ALL.into_iter().chain([PadPreset::Script]) {
-            for kind in [PadKind::Xbox, PadKind::GameCube] {
-            for left in [TriggerShield::Full, TriggerShield::Light] {
-                for right in [TriggerShield::Full, TriggerShield::Light] {
-                    let mut map = Mapper::new(preset);
-                    map.set_trigger_shields(TriggerShields { left, right });
-                    map.set_pad_kind(kind);
-                    tick(&mut map, &Sample::default());
-                    for (sample, expected) in presses(preset, kind) {
-                        assert_eq!(tick(&mut map, &sample), vec![edge(expected, true)], "{preset:?} {kind:?} {sample:?}");
-                        assert_eq!(tick(&mut map, &Sample::default()), vec![edge(expected, false)]);
+    fn the_fighter_mapper_agrees_with_the_layout_reference_over_generated_sdl_events() {
+        let mut rng = Rng::new(5);
+        let axes = [Axis::LeftX, Axis::LeftY, Axis::RightX, Axis::RightY, Axis::TriggerLeft, Axis::TriggerRight];
+        let buttons = [Button::South, Button::East, Button::West, Button::North, Button::LeftShoulder, Button::RightShoulder, Button::Start, Button::LeftStick, Button::Back, Button::DPadUp];
+        for _ in 0..cases() {
+            let preset = rng.pick(&PRESETS);
+            let mut config = Config { preset, tap_jump: false, triggers: TriggerShields::default(), kind: PadKind::Xbox, remaps: Default::default() };
+            let mut mapper = EventMapper::new(preset);
+            config.tap_jump = rng.chance(50);
+            mapper.set_tap_jump(config.tap_jump);
+            let (mut sample, mut armed, mut held) = (Sample::default(), false, BTreeSet::new());
+            for step in 0..40u64 {
+                let roll = rng.below(100);
+                let edges = if roll < 55 {
+                    let which = if rng.chance(90) { 1 } else { 2 };
+                    let event = if rng.chance(45) {
+                        let axis = rng.pick(&axes);
+                        let value = if matches!(axis, Axis::TriggerLeft | Axis::TriggerRight) { trigger(&mut rng) } else { self::axis(&mut rng) };
+                        Event::GamepadAxisMotion { timestamp: step, which: JoystickId::from(which), axis, value }
+                    } else {
+                        let button = rng.pick(&buttons);
+                        if rng.chance(50) {
+                            Event::GamepadButtonDown { timestamp: step, which: JoystickId::from(which), button }
+                        } else {
+                            Event::GamepadButtonUp { timestamp: step, which: JoystickId::from(which), button }
+                        }
+                    };
+                    let Some(input) = selected_input(&event, JoystickId::from(1)) else {
+                        assert_eq!(which, 2, "{event:?} from the selected pad was dropped");
+                        continue;
+                    };
+                    assert_eq!(which, 1, "{event:?} from another pad was selected");
+                    assert_eq!(input.capture_ns, step);
+                    let eligible = rng.chance(95);
+                    let edges = mapper.apply(input, eligible);
+                    if !eligible || !armed {
+                        sample = Sample::default();
+                        armed = false;
+                        assert_eq!(edges, diff(&held, &BTreeSet::new()));
+                        held.clear();
+                        continue;
                     }
-                    let mut sample = Sample { left_trigger: 20_000, ..Sample::default() };
-                    assert_eq!(tick(&mut map, &sample), vec![edge(action(left), true)]);
-                    sample.right_trigger = 20_000;
-                    let shared = left == right;
-                    assert_eq!(tick(&mut map, &sample), if shared { vec![] } else { vec![edge(right_action(right), true)] });
-                    sample.left_trigger = 0;
-                    assert_eq!(tick(&mut map, &sample), if shared { vec![] } else { vec![edge(action(left), false)] });
-                    sample.right_trigger = 0;
-                    assert_eq!(tick(&mut map, &sample), vec![edge(right_action(right), false)]);
+                    let field = match (input.control, input.value) {
+                        (Control::Axis(Axis::LeftX), InputValue::Axis(v)) => { sample.left_x = v; true }
+                        (Control::Axis(Axis::LeftY), InputValue::Axis(v)) => { sample.left_y = v; true }
+                        (Control::Axis(Axis::RightX), InputValue::Axis(v)) => { sample.right_x = v; true }
+                        (Control::Axis(Axis::RightY), InputValue::Axis(v)) => { sample.right_y = v; true }
+                        (Control::Axis(Axis::TriggerLeft), InputValue::Axis(v)) => { sample.left_trigger = v; true }
+                        (Control::Axis(Axis::TriggerRight), InputValue::Axis(v)) => { sample.right_trigger = v; true }
+                        (Control::Button(Button::South), InputValue::Button(v)) => { sample.a = v; true }
+                        (Control::Button(Button::East), InputValue::Button(v)) => { sample.b = v; true }
+                        (Control::Button(Button::West), InputValue::Button(v)) => { sample.x = v; true }
+                        (Control::Button(Button::North), InputValue::Button(v)) => { sample.y = v; true }
+                        (Control::Button(Button::LeftShoulder), InputValue::Button(v)) => { sample.lb = v; true }
+                        (Control::Button(Button::RightShoulder), InputValue::Button(v)) => { sample.rb = v; true }
+                        (Control::Button(Button::Start), InputValue::Button(v)) => { sample.start = v; true }
+                        (Control::Button(Button::LeftStick), InputValue::Button(v)) => { sample.left_stick = v; true }
+                        _ => false,
+                    };
+                    if !field {
+                        assert!(edges.is_empty(), "an unmapped control pressed {edges:?}");
+                        continue;
+                    }
+                    edges
+                } else if roll < 72 {
+                    sample = if rng.chance(50) { Sample::default() } else { self::sample(&mut rng) };
+                    let eligible = rng.chance(85);
+                    let edges = mapper.resync(&sample, eligible);
+                    if !eligible {
+                        armed = false;
+                        assert_eq!(edges, diff(&held, &BTreeSet::new()));
+                        held.clear();
+                        continue;
+                    }
+                    if !armed {
+                        armed = reference_neutral(&sample);
+                        assert!(edges.is_empty(), "pressed while arming: {edges:?}");
+                        continue;
+                    }
+                    edges
+                } else if roll < 82 {
+                    sample = Sample::default();
+                    armed = false;
+                    assert_eq!(mapper.disarm(), diff(&held, &BTreeSet::new()));
+                    held.clear();
+                    continue;
+                } else {
+                    match rng.below(4) {
+                        0 => { config.tap_jump = rng.chance(50); mapper.set_tap_jump(config.tap_jump) }
+                        1 => { config.triggers = TriggerShields { left: rng.pick(&SHIELDS), right: rng.pick(&SHIELDS) }; mapper.set_trigger_shields(config.triggers) }
+                        2 => { config.kind = rng.pick(&[PadKind::Xbox, PadKind::GameCube]); mapper.set_pad_kind(config.kind) }
+                        _ => {
+                            config.remaps = (0..rng.below(4)).map(|_| (rng.pick(&REMAPPABLE), rng.pick(&Move::ALL))).collect();
+                            mapper.set_remaps(config.remaps.clone())
+                        }
+                    }
+                    continue;
+                };
+                let next = reference_held(&config, &sample);
+                assert_eq!(edges, diff(&held, &next), "{:?} {:?} {:?} {:?} {sample:?}", config.preset, config.kind, config.triggers, config.remaps);
+                held = next;
+                assert_eq!(mapper.armed(), armed);
+                assert_eq!(mapper.sample(), &sample);
+            }
+        }
+
+        // The keys pressed are the keys the window shows for the same controls.
+        let mut keys = BTreeSet::new();
+        let all = [Action::Attack, Action::Special, Action::Jump, Action::ShortHop, Action::Grab, Action::Shield, Action::LightShield, Action::Walk, Action::Meter,
+            Action::Start, Action::Left, Action::Right, Action::Down, Action::Up, Action::CLeft, Action::CRight, Action::CUp, Action::CDown];
+        for action in all {
+            assert!(keys.insert(action.key()), "{action:?} shares its key");
+        }
+        let shown = |control: Pad| model::fighter_bindings().into_iter().find(|b| b.control == control).map(|b| b.press);
+        for (control, action) in [(Pad::LeftLeft, Action::Left), (Pad::LeftRight, Action::Right), (Pad::LeftDown, Action::Down), (Pad::LeftUp, Action::Up),
+            (Pad::RightUp, Action::CUp), (Pad::RightDown, Action::CDown), (Pad::RightLeft, Action::CLeft), (Pad::RightRight, Action::CRight), (Pad::Start, Action::Start)] {
+            assert_eq!(shown(control), Some(model::Press::Key(key_name(action))), "{control:?}");
+        }
+        let named: BTreeSet<String> = all.into_iter().map(key_name).collect();
+        for preset in PRESETS {
+            for left in SHIELDS {
+                for right in SHIELDS {
+                    for binding in model::fighter_bindings_with(preset, TriggerShields { left, right }) {
+                        let model::Press::Key(key) = binding.press else { panic!("{binding:?}") };
+                        assert!(named.contains(&key), "{} {key}", preset.name());
+                    }
                 }
             }
-            }
         }
-    }
-
-    #[test]
-    fn focus_loss_and_disconnect_require_a_fresh_neutral_baseline() {
-        let mut mapper = EventMapper::default();
-        mapper.resync(&Sample::default(), true);
-        let press = button(1, 1, Button::South, true);
-        assert_eq!(
-            capture(&mut mapper, &press, 1),
-            vec![edge(Action::Attack, true)]
-        );
-        assert_eq!(mapper.disarm(), vec![edge(Action::Attack, false)]);
-        assert!(capture(&mut mapper, &button(2, 1, Button::South, false), 1).is_empty());
-        mapper.resync(
-            &Sample {
-                a: true,
-                ..Sample::default()
-            },
-            true,
-        );
-        assert!(!mapper.armed());
-        assert!(capture(&mut mapper, &button(3, 1, Button::South, true), 1).is_empty());
-        mapper.resync(&Sample::default(), true);
-        assert!(mapper.armed());
-        assert_eq!(
-            capture(&mut mapper, &button(4, 1, Button::South, true), 1),
-            vec![edge(Action::Attack, true)]
-        );
-        assert_eq!(mapper.disarm(), vec![edge(Action::Attack, false)]);
-        assert!(capture(&mut mapper, &button(5, 1, Button::South, true), 1).is_empty());
     }
 }

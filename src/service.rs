@@ -898,61 +898,6 @@ pub fn snapshot(status: &Status, choice: model::ProfileChoice, profile: model::P
 mod tests {
     use super::*;
 
-    fn game(pid: u32, window: u32) -> Game {
-        Game {
-            pid,
-            birth: u64::from(pid) * 10,
-            documents: "/prefix/Documents/Warcraft III".into(),
-            target: Target::Window { display: ":0".into(), x11_window: window, niri_window: 7, niri_socket: "/run/niri.sock".into() },
-        }
-    }
-    fn pad() -> Pad {
-        Pad { link: "/dev/input/by-id/usb-Microsoft-event-joystick".into(), device: "/dev/input/event4".into(), name: "Xbox".into() }
-    }
-    fn session(key: &str) -> Session {
-        Session { key: key.into(), summary: key.into(), shown: None }
-    }
-
-    #[test]
-    fn brief_disappearance_keeps_output_and_held_keys_through_reconnection() {
-        #[derive(Default)]
-        struct Recorded(Vec<(String, bool)>);
-        impl any_map::Output for Recorded {
-            fn key(&mut self, key: &str, down: bool) -> Result<(), String> { self.0.push((key.into(), down)); Ok(()) }
-            fn click(&mut self, _: bool, _: bool) -> Result<(), String> { Ok(()) }
-            fn pointer(&mut self, _: f64, _: f64) -> Result<(), String> { Ok(()) }
-        }
-        let now = Instant::now();
-        let mut discovery = PadDiscovery::default();
-        let connected = discovery.update(Some(pad()), now);
-        let game = game(1, 5);
-        let target = output_target(Some(&game), connected.as_ref(), Some(any_map::Kind::Keys));
-        let mut driver = any_map::Driver::keys(model::PadPreset::Melee);
-        let mut out = Recorded::default();
-        let mut view = model::InputView::default();
-        driver.step(&view, true, 0.0, &mut out).unwrap();
-        view.press(model::Button::A, true);
-        driver.step(&view, true, 0.0, &mut out).unwrap();
-        assert_eq!(out.0.len(), 1);
-        assert!(out.0[0].1);
-        for milliseconds in [100, 500, 1900] {
-            let retained = discovery.update(None, now + Duration::from_millis(milliseconds));
-            assert_eq!(output_target(Some(&game), retained.as_ref(), Some(any_map::Kind::Keys)), target);
-            driver.step(&view, true, 0.0, &mut out).unwrap();
-        }
-        let mut reconnected = pad();
-        reconnected.device = "/dev/input/event8".into();
-        let retained = discovery.update(Some(reconnected), now + Duration::from_millis(1950));
-        assert_eq!(output_target(Some(&game), retained.as_ref(), Some(any_map::Kind::Keys)), target);
-        driver.step(&view, true, 0.0, &mut out).unwrap();
-        assert_eq!(out.0.len(), 1, "rediscovery must send no release or second press");
-        assert!(discovery.update(None, now + Duration::from_secs(3)).is_some());
-        assert!(discovery.update(None, now + Duration::from_secs(5)).is_none());
-        driver.release(&mut out).unwrap();
-        assert_eq!(out.0.len(), 2);
-        assert!(!out.0[1].1);
-    }
-
     #[test]
     fn bluetooth_event_without_by_id_is_found_and_reopened_with_held_buttons() {
         use evdev::{AbsInfo, AbsoluteAxisCode as Abs, AttributeSet, BusType, InputId, InputEvent, KeyCode, UinputAbsSetup, uinput::VirtualDevice};
@@ -990,109 +935,187 @@ mod tests {
         fs::remove_dir_all(dir).unwrap();
     }
 
-    #[test]
-    fn starts_only_with_game_pad_and_session() {
-        let mut s = Supervisor::default();
-        let now = Instant::now();
-        assert_eq!(s.step(None, Some(&pad()), Some(&session("a")), now), Decision::Keep);
-        assert_eq!(s.step(Some(&game(1, 5)), None, Some(&session("a")), now), Decision::Keep);
-        assert_eq!(s.step(Some(&game(1, 5)), Some(&pad()), None, now), Decision::Keep);
-        assert_eq!(s.step(Some(&game(1, 5)), Some(&pad()), Some(&session("a")), now), Decision::Start);
-        s.started(&game(1, 5), &session("a"));
-        assert_eq!(s.step(Some(&game(1, 5)), Some(&pad()), Some(&session("a")), now), Decision::Keep);
-        // A pad unplugged while serving is the helper's to wait for.
-        assert_eq!(s.step(Some(&game(1, 5)), None, Some(&session("a")), now), Decision::Keep);
+}
+
+#[cfg(test)]
+mod properties {
+    use super::*;
+    use crate::rng::{Rng, cases};
+
+    fn game(pid: u32, birth: u64, window: u32) -> Game {
+        Game {
+            pid,
+            birth,
+            documents: "/prefix/Documents/Warcraft III".into(),
+            target: Target::Window { display: ":0".into(), x11_window: window, niri_window: 7, niri_socket: "/run/niri.sock".into() },
+        }
+    }
+
+    fn pad(device: &str) -> Pad {
+        Pad { link: "/dev/input/by-id/usb-Microsoft-event-joystick".into(), device: device.into(), name: "Xbox".into() }
     }
 
     #[test]
-    fn rediscovers_a_restarted_game_or_a_new_window() {
-        let mut s = Supervisor::default();
-        let now = Instant::now();
-        s.started(&game(1, 5), &session("a"));
-        assert!(matches!(s.step(Some(&game(2, 5)), Some(&pad()), Some(&session("a")), now), Decision::Stop(reason) if reason.contains("restarted")));
-        assert!(matches!(s.step(Some(&game(1, 6)), Some(&pad()), Some(&session("a")), now), Decision::Stop(reason) if reason.contains("window")));
-        assert!(matches!(s.step(None, Some(&pad()), Some(&session("a")), now), Decision::Stop(reason) if reason.contains("closed")));
-        // An exited helper is started again for the new game after a short wait.
-        s.stopped(now);
-        assert_eq!(s.step(Some(&game(2, 5)), Some(&pad()), Some(&session("a")), now), Decision::Keep);
-        assert_eq!(s.step(Some(&game(2, 5)), Some(&pad()), Some(&session("a")), now + RETRY), Decision::Start);
+    fn the_supervisor_and_pad_discovery_follow_their_rules_over_generated_runs() {
+        let mut rng = Rng::new(9);
+        let start = Instant::now();
+        for _ in 0..cases() {
+            let mut supervisor = Supervisor::default();
+            let mut discovery = PadDiscovery::default();
+            let (mut serving, mut retry_at): (Option<(Game, String, Option<Duration>)>, Option<Duration>) = (None, None);
+            let (mut known, mut missing_since): (Option<Pad>, Option<Duration>) = (None, None);
+            let mut clock = Duration::ZERO;
+            let mut kept_target = None;
+            for _ in 0..30 {
+                clock += rng.pick(&[Duration::ZERO, Duration::from_millis(500), Duration::from_secs(1), Duration::from_millis(1500), Duration::from_secs(2), Duration::from_secs(3)]);
+                let now = start + clock;
+                let found = rng.chance(70).then(|| pad(rng.pick(&["/dev/input/event4", "/dev/input/event8"])));
+                let retained = discovery.update(found.clone(), now);
+                if let Some(found) = found {
+                    known = Some(found);
+                    missing_since = None;
+                } else if known.is_some() {
+                    let since = *missing_since.get_or_insert(clock);
+                    if clock - since >= Duration::from_secs(2) {
+                        known = None;
+                    }
+                }
+                assert_eq!(retained, known, "a missing pad is kept for two seconds");
+                let game = rng.chance(85).then(|| game(rng.pick(&[1, 2]), rng.pick(&[10, 20]), rng.pick(&[5, 6])));
+                let session = rng.chance(80).then(|| Session { key: rng.pick(&["a", "b"]).into(), summary: "Arena".into(), shown: None });
+                let target = output_target(game.as_ref(), retained.as_ref(), Some(any_map::Kind::Keys));
+                assert_eq!(target.is_some(), game.is_some() && retained.is_some());
+                if let (Some(target), Some(game)) = (&target, &game) {
+                    assert_eq!(target.1, game.pid);
+                    if let Some((kept_game, kept)) = &kept_target && kept_game == game {
+                        assert_eq!(kept, target, "a pad's new device node keeps the output");
+                    }
+                    kept_target = Some((game.clone(), target.clone()));
+                }
+                if rng.chance(40) {
+                    let event = rng.pick(&[HelperEvent::PadLost, HelperEvent::PadLost, HelperEvent::PadBack, HelperEvent::PadBack, HelperEvent::Ready, HelperEvent::Focus(false)]);
+                    supervisor.event(event, now);
+                    if let Some((_, _, lost)) = &mut serving {
+                        match event {
+                            HelperEvent::PadLost => *lost = lost.or(Some(clock)),
+                            HelperEvent::PadBack => *lost = None,
+                            _ => {}
+                        }
+                    }
+                }
+                let decision = supervisor.step(game.as_ref(), retained.as_ref(), session.as_ref(), now);
+                let expected = match &serving {
+                    Some((serving_game, key, lost)) => match &game {
+                        None => Some("closed"),
+                        Some(g) if g.pid != serving_game.pid || g.birth != serving_game.birth => Some("restarted"),
+                        Some(g) if g != serving_game => Some("window"),
+                        Some(_) if session.as_ref().is_some_and(|s| &s.key != key) => Some("new map session"),
+                        Some(_) if retained.is_some() && lost.is_some_and(|since| clock - since >= PAD_SWAP) => Some("another device"),
+                        Some(_) => None,
+                    },
+                    None => None,
+                };
+                match (&serving, expected) {
+                    (Some(_), Some(reason)) => {
+                        assert!(matches!(&decision, Decision::Stop(said) if said.contains(reason)), "{decision:?} should stop: {reason}");
+                        supervisor.stopped(now);
+                        serving = None;
+                        retry_at = Some(clock + RETRY);
+                    }
+                    (Some(_), None) => assert_eq!(decision, Decision::Keep),
+                    (None, _) => {
+                        let ready = game.is_some() && retained.is_some() && session.is_some() && retry_at.is_none_or(|at| clock >= at);
+                        assert_eq!(decision, if ready { Decision::Start } else { Decision::Keep });
+                        if ready {
+                            let (game, session) = (game.unwrap(), session.unwrap());
+                            supervisor.started(&game, &session);
+                            serving = Some((game, session.key, None));
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[test]
-    fn follows_a_new_session_and_keeps_an_unchanged_one() {
-        let mut s = Supervisor::default();
-        let now = Instant::now();
-        s.started(&game(1, 5), &session("a"));
-        // A session not visible right now (the map closed) keeps the helper.
-        assert_eq!(s.step(Some(&game(1, 5)), Some(&pad()), None, now), Decision::Keep);
-        assert!(matches!(s.step(Some(&game(1, 5)), Some(&pad()), Some(&session("b")), now), Decision::Stop(reason) if reason.contains("new map session")));
-    }
+    fn discovery_finds_exactly_the_matching_games_windows_and_pads() {
+        let mut rng = Rng::new(10);
+        let root = std::env::temp_dir().join(format!("service-discovery-{}", std::process::id()));
+        for case in 0..cases() / 10 {
+            let proc_root = root.join(format!("proc-{case}"));
+            fs::create_dir_all(&proc_root).unwrap();
+            let mut expected = Vec::new();
+            for pid in 10..10 + rng.below(5) as u32 {
+                let dir = proc_root.join(pid.to_string());
+                fs::create_dir_all(&dir).unwrap();
+                let (comm, comm_ok) = rng.pick(&[("Warcraft III.ex\n", true), ("WARCRAFT III.EX\n", true), ("bash\n", false), ("Warcraft\n", false)]);
+                let (command, command_ok) = rng.pick(&[
+                    ("C:\\Program Files (x86)\\Warcraft III\\_retail_\\x86_64\\Warcraft III.exe", true),
+                    ("/opt/wine/warcraft iii.EXE", true),
+                    ("C:\\Games\\Warcraft III.exe\\launcher.exe", false),
+                    ("/usr/bin/bash", false),
+                ]);
+                let display = rng.pick(&[Some(":0"), Some(":1"), Some(":0.0"), None]);
+                let prefix = rng.chance(85);
+                let start = 100 + rng.below(1000) as u64;
+                fs::write(dir.join("comm"), comm).unwrap();
+                fs::write(dir.join("cmdline"), format!("{command}\0-launch\0")).unwrap();
+                let mut environ = "HOME=/home/player\0".to_owned();
+                if let Some(display) = display { environ += &format!("DISPLAY={display}\0"); }
+                if prefix { environ += &format!("WINEPREFIX=/prefix/{pid}/\0"); }
+                fs::write(dir.join("environ"), environ).unwrap();
+                fs::write(dir.join("stat"), format!("{pid} (Warcraft III) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 {start} 20")).unwrap();
+                if comm_ok && command_ok && display == Some(":0") && prefix {
+                    expected.push((pid, start, PathBuf::from(format!("/prefix/{pid}/"))));
+                }
+            }
+            fs::create_dir_all(proc_root.join("self")).unwrap();
+            let mut found = warcraft_processes(&proc_root, ":0");
+            found.sort();
+            assert_eq!(found, expected);
 
-    #[test]
-    fn replaces_a_helper_whose_pad_came_back_as_another_device() {
-        let mut s = Supervisor::default();
-        let now = Instant::now();
-        s.started(&game(1, 5), &session("a"));
-        s.event(HelperEvent::PadLost, now);
-        assert_eq!(s.step(Some(&game(1, 5)), None, Some(&session("a")), now + PAD_SWAP), Decision::Keep);
-        assert_eq!(s.step(Some(&game(1, 5)), Some(&pad()), Some(&session("a")), now + PAD_SWAP / 2), Decision::Keep);
-        // The same pad reconnects by itself.
-        s.event(HelperEvent::PadBack, now + PAD_SWAP / 2);
-        assert_eq!(s.step(Some(&game(1, 5)), Some(&pad()), Some(&session("a")), now + PAD_SWAP * 2), Decision::Keep);
-        s.event(HelperEvent::PadLost, now + PAD_SWAP * 2);
-        assert!(matches!(s.step(Some(&game(1, 5)), Some(&pad()), Some(&session("a")), now + PAD_SWAP * 3), Decision::Stop(_)));
-    }
+            let pads = root.join(format!("pads-{case}"));
+            fs::create_dir_all(&pads).unwrap();
+            let target = pads.join("event9");
+            fs::write(&target, "").unwrap();
+            let mut links: Vec<(bool, String)> = Vec::new();
+            for (name, xbox) in [("usb-Generic_Pad-event-joystick", false), ("usb-Microsoft_Controller_1-event-joystick", true),
+                ("usb-8BitDo_XBOX_Wireless-event-joystick", true), ("usb-Microsoft_Controller_1-joystick", true), ("usb-Sony_Pad-event-joystick", false)] {
+                if rng.chance(50) {
+                    let dangling = rng.chance(15);
+                    std::os::unix::fs::symlink(if dangling { pads.join("gone") } else { target.clone() }, pads.join(name)).unwrap();
+                    if !dangling && name.ends_with("-event-joystick") {
+                        links.push((!xbox, name.to_owned()));
+                    }
+                }
+            }
+            links.sort();
+            let found = find_pad(&pads);
+            match links.first() {
+                Some((_, name)) => {
+                    let found = found.expect("a linked pad");
+                    assert_eq!(found.link, pads.join(name));
+                    assert_eq!(found.device, fs::canonicalize(&target).unwrap());
+                }
+                None => assert_eq!(found, None),
+            }
 
-    #[test]
-    fn finds_warcraft_on_its_display_only() {
-        let root = std::env::temp_dir().join(format!("service-proc-{}", std::process::id()));
-        let process = |pid: u32, command: &str, display: &str, start: u64| {
-            let dir = root.join(pid.to_string());
-            fs::create_dir_all(&dir).unwrap();
-            fs::write(dir.join("cmdline"), format!("{command}\0-launch\0")).unwrap();
-            fs::write(dir.join("environ"), format!("HOME=/home/tom\0DISPLAY={display}\0WINEPREFIX=/prefix/{pid}/\0")).unwrap();
-            fs::write(dir.join("comm"), if command.ends_with(".exe") { "Warcraft III.ex\n" } else { "bash\n" }).unwrap();
-            fs::write(dir.join("stat"), format!("{pid} (Warcraft III.ex) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 {start} 20")).unwrap();
-        };
-        process(10, "C:\\Program Files (x86)\\Warcraft III\\_retail_\\x86_64\\Warcraft III.exe", ":0", 500);
-        process(11, "C:\\Program Files (x86)\\Warcraft III\\_retail_\\x86_64\\Warcraft III.exe", ":1", 600);
-        process(12, "/usr/bin/bash", ":0", 700);
-        assert_eq!(warcraft_processes(&root, ":0"), vec![(10, 500, PathBuf::from("/prefix/10/"))]);
-        assert_eq!(warcraft_processes(&root, ":1").len(), 1);
+            let candidates = [
+                (38u64, 3140u64, "Steam", "steam"),
+                (92, 3140, "Warcraft III", "steam_app_1"),
+                (93, 3140, "Warcraft III", "steam_app_1"),
+                (4, 58013, "Chrome", "google-chrome"),
+                (5, 777, "Warcraft III", "other"),
+            ];
+            let chosen: Vec<_> = candidates.iter().filter(|_| rng.chance(50)).collect();
+            let windows = serde_json::Value::Array(chosen.iter().map(|(id, pid, title, app)| serde_json::json!({"id": id, "pid": pid, "title": title, "app_id": app})).collect());
+            let pid = rng.pick(&[777u32, 58013, 1]);
+            let (title, class) = rng.pick(&[("Warcraft III", "steam_app_1"), ("", ""), ("Warcraft III", "other")]);
+            let matching: Vec<u64> = chosen.iter()
+                .filter(|(_, p, t, a)| *p == u64::from(pid) || (!title.is_empty() && *t == title && *a == class))
+                .map(|(id, ..)| *id).collect();
+            assert_eq!(niri_game_window(&windows, pid, title, class), (matching.len() == 1).then(|| matching[0]), "{windows} {pid} {title} {class}");
+        }
         fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn picks_the_game_window_niri_reports_uniquely() {
-        let windows: Value = serde_json::from_str(r#"[
-            {"id": 38, "pid": 3140, "title": "Steam", "app_id": "steam"},
-            {"id": 92, "pid": 3140, "title": "Warcraft III", "app_id": "steam_app_3516115571"},
-            {"id": 4, "pid": 58013, "title": "r/warcraft3 - Google Chrome", "app_id": "google-chrome"}
-        ]"#).unwrap();
-        assert_eq!(niri_game_window(&windows, 2078193, "Warcraft III", "steam_app_3516115571"), Some(92));
-        assert_eq!(niri_game_window(&windows, 2078193, "Warcraft III", "other"), None);
-        assert_eq!(niri_game_window(&windows, 58013, "", ""), Some(4));
-        let twice: Value = serde_json::from_str(r#"[
-            {"id": 1, "pid": 3140, "title": "Warcraft III", "app_id": "steam_app_3516115571"},
-            {"id": 2, "pid": 3140, "title": "Warcraft III", "app_id": "steam_app_3516115571"}
-        ]"#).unwrap();
-        assert_eq!(niri_game_window(&twice, 2078193, "Warcraft III", "steam_app_3516115571"), None);
-    }
-
-    #[test]
-    fn finds_the_xbox_pad_by_its_stable_link() {
-        let dir = std::env::temp_dir().join(format!("service-pads-{}", std::process::id()));
-        fs::create_dir_all(&dir).unwrap();
-        assert_eq!(find_pad(&dir), None);
-        let target = dir.join("event9");
-        fs::write(&target, "").unwrap();
-        std::os::unix::fs::symlink(&target, dir.join("usb-Generic_Pad-event-joystick")).unwrap();
-        std::os::unix::fs::symlink(&target, dir.join("usb-Microsoft_Controller_123-joystick")).unwrap();
-        assert_eq!(find_pad(&dir).unwrap().link, dir.join("usb-Generic_Pad-event-joystick"));
-        std::os::unix::fs::symlink(&target, dir.join("usb-Microsoft_Controller_123-event-joystick")).unwrap();
-        let pad = find_pad(&dir).unwrap();
-        assert_eq!(pad.link, dir.join("usb-Microsoft_Controller_123-event-joystick"));
-        assert_eq!(pad.device, fs::canonicalize(&target).unwrap());
-        fs::remove_dir_all(dir).unwrap();
     }
 }

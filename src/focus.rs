@@ -18,26 +18,25 @@ fn executable_matches(path: &str, name: &str) -> bool {
 }
 
 #[cfg(test)]
-#[test]
-fn executable_match_uses_the_exact_file_name() {
-    assert!(executable_matches(
-        r"C:\Games\Warcraft III\_retail_\x86_64\Warcraft III.exe",
-        "Warcraft III.exe"
-    ));
-    assert!(executable_matches(
-        "/Applications/Warcraft III.app/Contents/MacOS/Warcraft III",
-        "Warcraft III"
-    ));
-    assert!(executable_matches("warcraft iii.EXE", "Warcraft III.exe"));
-    assert!(!executable_matches(
-        r"C:\Games\Warcraft III.exe\launcher.exe",
-        "Warcraft III.exe"
-    ));
-    assert!(!executable_matches(
-        "/usr/bin/Warcraft III Launcher",
-        "Warcraft III"
-    ));
-    assert!(!executable_matches("", "Warcraft III"));
+mod properties {
+    use crate::rng::{Rng, cases};
+
+    #[test]
+    fn executable_match_is_the_last_path_component_ignoring_case() {
+        let mut rng = Rng::new(11);
+        for _ in 0..cases() {
+            let name = rng.pick(&["Warcraft III.exe", "Warcraft III"]);
+            let file = rng.pick(&[name.to_owned(), name.to_uppercase(), name.to_lowercase(), format!("{name} Launcher"), format!("x{name}"), "launcher.exe".into(), String::new()]);
+            let directories: Vec<String> = (0..rng.below(4)).map(|_| rng.pick(&["C:", "Games", "Warcraft III.exe", "Warcraft III", "Applications", "_retail_"]).to_owned()).collect();
+            let mut path = String::new();
+            for directory in &directories {
+                path += directory;
+                path.push(rng.pick(&['/', '\\']));
+            }
+            path += &file;
+            assert_eq!(super::executable_matches(&path, name), file.eq_ignore_ascii_case(name), "{path:?} {name:?}");
+        }
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -487,34 +486,33 @@ mod linux {
     }
 
     #[cfg(test)]
-    mod tests {
+    mod properties {
         use super::*;
-        use serde_json::json;
+        use crate::rng::{Rng, cases};
 
         #[test]
-        fn pointer_root_requires_exact_active_and_pointer_recipient() {
-            assert!(satellite_focus(42, 42, 1, 42));
-            assert!(satellite_focus(42, 42, 42, 99));
-            assert!(!satellite_focus(42, 42, 1, 99));
-            assert!(!satellite_focus(42, 99, 1, 42));
-            assert!(!satellite_focus(42, 42, 99, 42));
-            assert!(!satellite_focus(42, 42, 0, 42));
-        }
-
-        #[test]
-        fn bridge_metadata_must_match_exact_id_and_be_unique() {
-            let window = json!({"id":354,"pid":3751,"title":"Warcraft III","app_id":"game"});
-            let windows = json!([window]);
-            assert!(matching_niri_window(&windows, 354, 3751, "Warcraft III", "game").is_some());
-            assert!(matching_niri_window(&windows, 353, 3751, "Warcraft III", "game").is_none());
-            assert!(matching_niri_window(&windows, 354, 3752, "Warcraft III", "game").is_none());
-            assert!(matching_niri_window(&windows, 354, 3751, "Battle.net", "game").is_none());
-            assert!(matching_niri_window(&windows, 354, 3751, "Warcraft III", "other").is_none());
-            let duplicate =
-                json!([window, {"id":355,"pid":3751,"title":"Warcraft III","app_id":"game"}]);
-            assert!(matching_niri_window(&duplicate, 354, 3751, "Warcraft III", "game").is_none());
+        fn focus_needs_the_exact_target_and_niri_metadata_a_unique_exact_match() {
+            let values = [0, 1, 42, 99];
+            for target in values { for active in values { for focus in values { for pointer in values {
+                let expected = target != 1 && active == target && (focus == target || (focus == 1 && pointer == target));
+                if target != 1 {
+                    assert_eq!(satellite_focus(target, active, focus, pointer), expected, "{target} {active} {focus} {pointer}");
+                }
+            } } } }
+            let mut rng = Rng::new(12);
+            let candidates = [(354u64, 3751u64, "Warcraft III", "game"), (355, 3751, "Warcraft III", "game"), (356, 3752, "Warcraft III", "game"),
+                (357, 3751, "Battle.net", "game"), (358, 3751, "Warcraft III", "other")];
+            for _ in 0..cases() {
+                let chosen: Vec<_> = candidates.iter().filter(|_| rng.chance(50)).collect();
+                let windows = Value::Array(chosen.iter().map(|(id, pid, title, app)| serde_json::json!({"id": id, "pid": pid, "title": title, "app_id": app})).collect());
+                let id = rng.pick(&[354u64, 355, 356, 357, 358]);
+                let matching: Vec<u64> = chosen.iter().filter(|(_, pid, title, app)| *pid == 3751 && *title == "Warcraft III" && *app == "game").map(|(id, ..)| *id).collect();
+                let found = matching_niri_window(&windows, id, 3751, "Warcraft III", "game").and_then(|w| w.get("id")).and_then(Value::as_u64);
+                assert_eq!(found, (matching == [id]).then_some(id), "{windows} {id}");
+            }
         }
     }
+
 }
 
 #[cfg(target_os = "linux")]
