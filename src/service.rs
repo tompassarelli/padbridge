@@ -90,7 +90,7 @@ pub enum HelperEvent {
 
 /// The helper process that serves a session: the service appends the fighter
 /// layout's settings (`--preset`, `--tap-jump`, `--left-trigger`,
-/// `--right-trigger`, and `--remaps` when any) and reads its standard error line by line.
+/// `--right-trigger`, `--right-stick`, and `--remaps` when any) and reads its standard error line by line.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Helper {
     pub program: PathBuf,
@@ -692,7 +692,7 @@ pub fn run(config: &Config, profile: &mut dyn Profile, stop: &AtomicBool, mut re
         if let Some(interface) = &interface {
             for message in interface.commands() {
                 match message {
-                    message @ (model::ClientMessage::TapJump(_) | model::ClientMessage::PadPreset(_) | model::ClientMessage::TriggerShields(_) | model::ClientMessage::Remaps(_)) => {
+                    message @ (model::ClientMessage::TapJump(_) | model::ClientMessage::PadPreset(_) | model::ClientMessage::TriggerShields(_) | model::ClientMessage::RightStick(_) | model::ClientMessage::Remaps(_)) => {
                         if settings.apply(&message) {
                             settings::save(&config.settings_file, &settings)?;
                             if let Some(current) = running.take() { stop_child(current); }
@@ -808,6 +808,7 @@ pub fn run(config: &Config, profile: &mut dyn Profile, stop: &AtomicBool, mut re
                 command.args(["--preset", settings.pad_preset.name()]);
                 command.args(["--tap-jump", if settings.tap_jump { "on" } else { "off" }]);
                 command.args(["--left-trigger", settings.triggers.left.name(), "--right-trigger", settings.triggers.right.name()]);
+                command.args(["--right-stick", settings.right_stick.name()]);
                 if !settings.remaps.is_empty() {
                     command.args(["--remaps".to_owned(), model::remaps_arg(&settings.remaps)]);
                 }

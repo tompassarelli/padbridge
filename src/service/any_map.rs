@@ -115,6 +115,7 @@ impl Driver {
         let mut driver = Self::keys_with_ingress(settings.pad_preset, route);
         if let Some(mapper) = &mut driver.keys {
             mapper.set_tap_jump(settings.tap_jump);
+            mapper.set_right_stick(settings.right_stick);
             mapper.set_trigger_shields(settings.triggers);
             mapper.set_remaps(settings.remaps.clone());
         }
@@ -545,7 +546,7 @@ mod contract {
         for (set, keys) in &sets {
             for preset in PRESETS {
                 for (left, right) in SHIELDS.into_iter().flat_map(|left| SHIELDS.map(|right| (left, right))) {
-                    for binding in model::fighter_bindings_with(preset, TriggerShields { left, right }) {
+                    for binding in model::RightStick::ALL.into_iter().flat_map(|mode| model::fighter_bindings_with(preset, TriggerShields { left, right }, mode)) {
                         let Press::Key(sent) = &binding.press else { continue };
                         let wanted = contract.map_actions.get(&binding.action)
                             .unwrap_or_else(|| panic!("{} {:?} is labelled {:?}, which the contract leaves out", preset.name(), binding.control, binding.action));
@@ -639,7 +640,8 @@ mod contract {
         let mut rng = Rng(std::env::var("PROPERTY_SEED").ok().and_then(|seed| seed.parse().ok()).unwrap_or(0xc0ffee));
         for preset in PRESETS {
             let triggers = TriggerShields { left: SHIELDS[rng.below(2) as usize], right: SHIELDS[rng.below(2) as usize] };
-            let settings = model::ControllerSettings { pad_preset: preset, triggers, ..Default::default() };
+            let right_stick = model::RightStick::ALL[rng.below(2) as usize];
+            let settings = model::ControllerSettings { pad_preset: preset, triggers, right_stick, ..Default::default() };
             let tilt = model::remap(Vec::new(), &[(Control::Lb, Move::Tilt)].into(), triggers).remove(0).press;
             let fight = settings.bindings(PadKind::Xbox);
             let menus = menu_bindings(true);
@@ -655,7 +657,7 @@ mod contract {
                     out.moved = false;
                     driver.step(&input, true, 0.01, &mut out).unwrap();
                     let mut presses: Vec<&Press> = table.iter().filter(|b| controls.contains(&b.control)).map(|b| &b.press).collect();
-                    if screen == "match" && preset == PadPreset::Tom && controls.iter().any(|c| RIGHT.contains(c)) {
+                    if screen == "match" && right_stick == model::RightStick::Tilt && controls.iter().any(|c| RIGHT.contains(c)) {
                         presses.push(&tilt);
                     }
                     let keys: BTreeSet<String> = presses.iter().filter_map(|p| key(p)).collect();
@@ -667,7 +669,7 @@ mod contract {
                 }
             }
         }
-        let shields: Vec<_> = model::fighter_bindings_with(PadPreset::Tom, TriggerShields::default()).into_iter()
+        let shields: Vec<_> = model::fighter_bindings_with(PadPreset::Tom, TriggerShields::default(), model::RightStick::default()).into_iter()
             .filter(|b| matches!(b.control, Control::Lt | Control::Rt)).map(|b| b.action).collect();
         assert_eq!(shields, ["Shield", "Shield"], "LT and RT both shield");
         assert!(menu_bindings(true).iter().any(|b| b.control == Control::Start && b.press == Press::Key("y".into())), "Start presses Y in menus");

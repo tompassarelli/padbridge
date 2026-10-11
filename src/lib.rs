@@ -189,6 +189,9 @@ impl EventMapper {
     pub fn set_tap_jump(&mut self, enabled: bool) {
         self.mapper.set_tap_jump(enabled);
     }
+    pub fn set_right_stick(&mut self, mode: model::RightStick) {
+        self.mapper.set_right_stick(mode);
+    }
     pub fn set_pad_kind(&mut self, kind: model::PadKind) {
         self.mapper.set_pad_kind(kind);
     }
@@ -263,6 +266,7 @@ pub struct Mapper {
     preset: model::PadPreset,
     tap_jump: bool,
     triggers: model::TriggerShields,
+    right_stick: model::RightStick,
     kind: model::PadKind,
     remaps: model::Remaps,
     buttons: Vec<(model::Control, Action)>,
@@ -290,13 +294,17 @@ impl Mapper {
     pub fn set_tap_jump(&mut self, enabled: bool) {
         self.tap_jump = enabled;
     }
+    pub fn set_right_stick(&mut self, mode: model::RightStick) {
+        self.right_stick = mode;
+        self.rebind();
+    }
     pub fn new(preset: model::PadPreset) -> Self {
-        let mut mapper = Self { held: BTreeSet::new(), armed: false, preset, tap_jump: false, triggers: Default::default(), kind: Default::default(), remaps: Default::default(), buttons: Vec::new() };
+        let mut mapper = Self { held: BTreeSet::new(), armed: false, preset, tap_jump: false, triggers: Default::default(), right_stick: Default::default(), kind: Default::default(), remaps: Default::default(), buttons: Vec::new() };
         mapper.rebind();
         mapper
     }
     fn rebind(&mut self) {
-        let bindings = model::remap(model::pad_bindings(self.preset, self.triggers, self.kind), &self.remaps, self.triggers);
+        let bindings = model::remap(model::pad_bindings(self.preset, self.triggers, self.right_stick, self.kind), &self.remaps, self.triggers);
         self.buttons = bindings.iter().filter_map(|binding| Some((binding.control, Action::of_press(&binding.press)?))).collect();
     }
     pub fn armed(&self) -> bool {
@@ -331,7 +339,7 @@ impl Mapper {
         let stick_jump = stick::tap_jump(left_y, self.tap_jump, buttons.contains(&Action::Walk), [Action::Shield, Action::LightShield].iter().any(|shield| buttons.contains(shield)));
         // Union source states before diffing, so releasing one source never
         // releases an action another source still owns.
-        let right_stick_tilts = self.preset == model::PadPreset::Tom && (right_x != 0 || right_y != 0);
+        let right_stick_tilts = self.right_stick == model::RightStick::Tilt && (right_x != 0 || right_y != 0);
         let bindings = [
             (Action::Jump, stick_jump),
             (Action::Walk, right_stick_tilts),
@@ -406,7 +414,7 @@ pub(crate) mod rng {
 mod properties {
     use super::rng::{Rng, cases};
     use super::*;
-    use model::{Control as Pad, Move, PadKind, PadPreset, TriggerShield, TriggerShields};
+    use model::{Control as Pad, Move, PadKind, PadPreset, RightStick, TriggerShield, TriggerShields};
 
     const PRESETS: [PadPreset; 4] = [PadPreset::Melee, PadPreset::ZJump, PadPreset::Tom, PadPreset::Script];
     const SHIELDS: [TriggerShield; 2] = [TriggerShield::Full, TriggerShield::Light];
@@ -416,6 +424,7 @@ mod properties {
         preset: PadPreset,
         tap_jump: bool,
         triggers: TriggerShields,
+        right_stick: RightStick,
         kind: PadKind,
         remaps: model::Remaps,
     }
@@ -485,7 +494,7 @@ mod properties {
         let up = if tilt && shield { up.min(0.65) } else { up };
         let directions = [
             (Action::Jump, config.tap_jump && up > 0.6625),
-            (Action::Walk, config.preset == PadPreset::Tom && (rx, ry) != (0, 0)),
+            (Action::Walk, config.right_stick == RightStick::Tilt && (rx, ry) != (0, 0)),
             (Action::Left, lx < 0),
             (Action::Right, lx > 0),
             (Action::Down, stick::stick_down(ly)),
@@ -540,7 +549,7 @@ mod properties {
         let buttons = [Button::South, Button::East, Button::West, Button::North, Button::LeftShoulder, Button::RightShoulder, Button::Start, Button::LeftStick, Button::Back, Button::DPadUp];
         for _ in 0..cases() {
             let preset = rng.pick(&PRESETS);
-            let mut config = Config { preset, tap_jump: false, triggers: TriggerShields::default(), kind: PadKind::Xbox, remaps: Default::default() };
+            let mut config = Config { preset, tap_jump: false, triggers: TriggerShields::default(), right_stick: RightStick::Smash, kind: PadKind::Xbox, remaps: Default::default() };
             let mut mapper = EventMapper::new(preset);
             config.tap_jump = rng.chance(50);
             mapper.set_tap_jump(config.tap_jump);
@@ -621,8 +630,9 @@ mod properties {
                     held.clear();
                     continue;
                 } else {
-                    match rng.below(4) {
+                    match rng.below(5) {
                         0 => { config.tap_jump = rng.chance(50); mapper.set_tap_jump(config.tap_jump) }
+                        3 => { config.right_stick = rng.pick(&RightStick::ALL); mapper.set_right_stick(config.right_stick) }
                         1 => { config.triggers = TriggerShields { left: rng.pick(&SHIELDS), right: rng.pick(&SHIELDS) }; mapper.set_trigger_shields(config.triggers) }
                         2 => { config.kind = rng.pick(&[PadKind::Xbox, PadKind::GameCube]); mapper.set_pad_kind(config.kind) }
                         _ => {
@@ -656,7 +666,7 @@ mod properties {
         for preset in PRESETS {
             for left in SHIELDS {
                 for right in SHIELDS {
-                    for binding in model::fighter_bindings_with(preset, TriggerShields { left, right }) {
+                    for binding in RightStick::ALL.into_iter().flat_map(|mode| model::fighter_bindings_with(preset, TriggerShields { left, right }, mode)) {
                         let model::Press::Key(key) = binding.press else { panic!("{binding:?}") };
                         assert!(named.contains(&key), "{} {key}", preset.name());
                     }

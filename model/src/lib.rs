@@ -190,6 +190,7 @@ pub enum ClientMessage {
     PadPreset(PadPreset),
     TapJump(bool),
     TriggerShields(TriggerShields),
+    RightStick(RightStick),
     /// Replaces the per-control changes on top of the pad preset.
     Remaps(Remaps),
     /// Replaces the Any map profile's bindings.
@@ -309,7 +310,7 @@ impl PadPreset {
 }
 
 pub fn fighter_bindings_for(preset: PadPreset) -> Vec<Binding> {
-    fighter_bindings_with(preset, TriggerShields::default())
+    fighter_bindings_with(preset, TriggerShields::default(), RightStick::default())
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -334,12 +335,30 @@ pub struct TriggerShields {
     pub right: TriggerShield,
 }
 
+/// What a right-stick flick asks for; Tilt also holds Tilt (P), which turns the smash into a tilt or aerial.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RightStick {
+    #[default]
+    Smash,
+    Tilt,
+}
+
+impl RightStick {
+    pub const ALL: [Self; 2] = [Self::Smash, Self::Tilt];
+    pub fn name(self) -> &'static str { match self { Self::Smash => "smash", Self::Tilt => "tilt" } }
+    pub fn parse(name: &str) -> Result<Self, String> {
+        Self::ALL.into_iter().find(|mode| mode.name() == name).ok_or_else(|| "right stick needs smash or tilt".into())
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ControllerSettings {
     pub pad_preset: PadPreset,
     pub tap_jump: bool,
     pub triggers: TriggerShields,
+    pub right_stick: RightStick,
     pub remaps: Remaps,
 }
 
@@ -351,6 +370,7 @@ impl ControllerSettings {
             ClientMessage::PadPreset(preset) => self.pad_preset = *preset,
             ClientMessage::TapJump(on) => self.tap_jump = *on,
             ClientMessage::TriggerShields(triggers) => self.triggers = *triggers,
+            ClientMessage::RightStick(mode) => self.right_stick = *mode,
             ClientMessage::Remaps(remaps) if remaps.keys().all(|control| REMAPPABLE.contains(control)) => self.remaps = remaps.clone(),
             _ => {}
         }
@@ -359,7 +379,7 @@ impl ControllerSettings {
 
     /// The preset on a pad of `kind` with the remaps applied.
     pub fn bindings(&self, kind: PadKind) -> Vec<Binding> {
-        remap(pad_bindings(self.pad_preset, self.triggers, kind), &self.remaps, self.triggers)
+        remap(pad_bindings(self.pad_preset, self.triggers, self.right_stick, kind), &self.remaps, self.triggers)
     }
 }
 
@@ -483,8 +503,8 @@ impl PadKind {
 
 /// A preset on a pad of `kind`: buttons keep their printed letters, so a
 /// GameCube pad's B (west) is special and its X (east) jumps in melee.
-pub fn pad_bindings(preset: PadPreset, triggers: TriggerShields, kind: PadKind) -> Vec<Binding> {
-    let mut bindings = fighter_bindings_with(preset, triggers);
+pub fn pad_bindings(preset: PadPreset, triggers: TriggerShields, right_stick: RightStick, kind: PadKind) -> Vec<Binding> {
+    let mut bindings = fighter_bindings_with(preset, triggers, right_stick);
     if kind == PadKind::GameCube {
         for binding in &mut bindings {
             binding.control = match binding.control { Control::B => Control::X, Control::X => Control::B, control => control };
@@ -493,7 +513,7 @@ pub fn pad_bindings(preset: PadPreset, triggers: TriggerShields, kind: PadKind) 
     bindings
 }
 
-pub fn fighter_bindings_with(preset: PadPreset, triggers: TriggerShields) -> Vec<Binding> {
+pub fn fighter_bindings_with(preset: PadPreset, triggers: TriggerShields, right_stick: RightStick) -> Vec<Binding> {
     use Control::*;
     let (attack, special, jump, grab, short_hop, tilt) =
         (key("n"), key("u"), key("i"), key("o"), key("z"), key("p"));
@@ -516,8 +536,7 @@ pub fn fighter_bindings_with(preset: PadPreset, triggers: TriggerShields) -> Vec
             shield(Lt, triggers), shield(Rt, triggers),
         ],
     };
-    let tilts = preset == PadPreset::Tom;
-    let right = |smash: &'static str, tilt: &'static str| if tilts { tilt } else { smash };
+    let right = |smash: &'static str, tilt: &'static str| match right_stick { RightStick::Smash => smash, RightStick::Tilt => tilt };
     buttons.into_iter().chain([
         bind(Start, "Pause", key("y")),
         bind(LeftLeft, "Move left", key("w")),
@@ -755,6 +774,10 @@ mod properties {
     const SHIELDS: [TriggerShield; 2] = [TriggerShield::Full, TriggerShield::Light];
     const KINDS: [PadKind; 2] = [PadKind::Xbox, PadKind::GameCube];
 
+    fn right_bindings(preset: PadPreset, mode: RightStick, triggers: TriggerShields, kind: PadKind) -> Vec<Binding> {
+        pad_bindings(preset, triggers, mode, kind).into_iter().filter(|b| matches!(b.control, Control::RightUp | Control::RightDown | Control::RightLeft | Control::RightRight)).collect()
+    }
+
     fn remaps(rng: &mut Rng) -> Remaps {
         (0..rng.below(5)).map(|_| (rng.pick(&REMAPPABLE), rng.pick(&Move::ALL))).collect()
     }
@@ -764,6 +787,7 @@ mod properties {
             pad_preset: rng.pick(&PRESETS),
             tap_jump: rng.chance(50),
             triggers: TriggerShields { left: rng.pick(&SHIELDS), right: rng.pick(&SHIELDS) },
+            right_stick: rng.pick(&RightStick::ALL),
             remaps: remaps(rng),
         }
     }
@@ -857,10 +881,13 @@ mod properties {
             for shield in SHIELDS {
                 assert_eq!(TriggerShield::parse(shield.name()), Ok(shield));
             }
+            for mode in RightStick::ALL {
+                assert_eq!(RightStick::parse(mode.name()), Ok(mode));
+            }
             let saved = serde_json::to_value(&settings).unwrap();
             assert_eq!(serde_json::from_value::<ControllerSettings>(saved.clone()).unwrap(), settings);
             let mut partial = saved.as_object().unwrap().clone();
-            let dropped = rng.pick(&["pad_preset", "tap_jump", "triggers", "remaps"]);
+            let dropped = rng.pick(&["pad_preset", "tap_jump", "triggers", "right_stick", "remaps"]);
             partial.remove(dropped);
             let loaded: ControllerSettings = serde_json::from_value(serde_json::Value::Object(partial)).unwrap();
             let defaults = ControllerSettings::default();
@@ -868,6 +895,7 @@ mod properties {
                 "pad_preset" => assert_eq!(loaded.pad_preset, defaults.pad_preset),
                 "tap_jump" => assert_eq!(loaded.tap_jump, defaults.tap_jump),
                 "triggers" => assert_eq!(loaded.triggers, defaults.triggers),
+                "right_stick" => assert_eq!(loaded.right_stick, RightStick::Smash),
                 _ => assert_eq!(loaded.remaps, defaults.remaps),
             }
 
@@ -885,9 +913,13 @@ mod properties {
             let changed = tap != settings.tap_jump;
             assert_eq!(settings.apply(&ClientMessage::TapJump(tap)), changed);
             assert_eq!(settings.tap_jump, tap);
+            let mode = rng.pick(&RightStick::ALL);
+            let changed = mode != settings.right_stick;
+            assert_eq!(settings.apply(&ClientMessage::RightStick(mode)), changed);
+            assert_eq!(settings.right_stick, mode);
 
             let kind = rng.pick(&KINDS);
-            let plain = pad_bindings(settings.pad_preset, settings.triggers, kind);
+            let plain = pad_bindings(settings.pad_preset, settings.triggers, settings.right_stick, kind);
             let bound = settings.bindings(kind);
             for control in CONTROLS {
                 let of = |bindings: &[Binding]| bindings.iter().filter(|b| b.control == control).cloned().collect::<Vec<_>>();
@@ -897,7 +929,7 @@ mod properties {
                     Some(step) => {
                         let actions = of(&bound);
                         assert_eq!(actions.len(), 1, "{control:?}");
-                        let preset_of = |action: &str| fighter_bindings_with(PadPreset::Script, settings.triggers).into_iter().chain(fighter_bindings_with(PadPreset::Tom, settings.triggers))
+                        let preset_of = |action: &str| fighter_bindings_with(PadPreset::Script, settings.triggers, settings.right_stick).into_iter().chain(fighter_bindings_with(PadPreset::Tom, settings.triggers, settings.right_stick))
                             .find(|b| b.action == action).map(|b| b.press);
                         let expected = match step {
                             Move::Attack => preset_of("Attack"),
@@ -924,7 +956,7 @@ mod properties {
             for preset in PRESETS {
                 let triggers = TriggerShields { left: rng.pick(&SHIELDS), right: rng.pick(&SHIELDS) };
                 let printed = |kind: PadKind| -> std::collections::BTreeSet<(&'static str, String)> {
-                    pad_bindings(preset, triggers, kind).into_iter().map(|b| {
+                    pad_bindings(preset, triggers, settings.right_stick, kind).into_iter().map(|b| {
                         let label = match (kind, kind.label(b.control)) {
                             (PadKind::GameCube, "Z") => "RB",
                             (PadKind::GameCube, "L") => "LT",
@@ -935,6 +967,16 @@ mod properties {
                     }).collect()
                 };
                 assert_eq!(printed(PadKind::GameCube), printed(PadKind::Xbox), "a GameCube pad keeps its printed letters in {}", preset.name());
+                let right = |mode| right_bindings(preset, mode, triggers, kind);
+                let (smash, tilt) = (right(RightStick::Smash), right(RightStick::Tilt));
+                for mode in RightStick::ALL {
+                    assert_eq!(right(mode), right_bindings(PadPreset::Melee, mode, triggers, kind), "the right stick ignores the preset in {}", preset.name());
+                }
+                assert_eq!(smash.len(), 4);
+                for (s, t) in smash.iter().zip(&tilt) {
+                    assert_eq!((s.control, &s.press), (t.control, &t.press), "only the label follows the right stick mode");
+                    assert!(s.action.to_lowercase().contains("smash") && t.action.to_lowercase().contains("tilt"), "{s:?} {t:?}");
+                }
             }
 
             let s = snapshot(&mut rng);
@@ -958,6 +1000,7 @@ mod properties {
                 ClientMessage::Profile(rng.pick(&[ProfileChoice::Auto, ProfileChoice::Map, ProfileChoice::AnyMap, ProfileChoice::Off])),
                 ClientMessage::PadPreset(rng.pick(&PRESETS)),
                 ClientMessage::TapJump(rng.chance(50)),
+                ClientMessage::RightStick(rng.pick(&RightStick::ALL)),
                 ClientMessage::Remaps(self::remaps(&mut rng)),
                 ClientMessage::Bindings(any_map_bindings()),
             ] {

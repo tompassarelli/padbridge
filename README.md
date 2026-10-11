@@ -109,7 +109,7 @@ standard input with exactly one line on its standard output:
   pointer, A left click and B right click (`model::menu_pointer_bindings`)
   until the map says otherwise.
 - The helper gets the fighter layout's settings appended (`--preset`,
-  `--tap-jump`, `--left-trigger`, `--right-trigger`, and `--remaps` when there
+  `--tap-jump`, `--left-trigger`, `--right-trigger`, `--right-stick`, and `--remaps` when there
   are remaps), `WC3_SERVICE_PID`,
   and, for a window, `DISPLAY` and `NIRI_SOCKET`. The service forwards each
   line of its standard error as a `line` request. `EVENT` is `"ready"`,
@@ -190,19 +190,22 @@ Three presets choose the buttons; sticks and Start are the same in all of them.
 | Start | Pause Y | Pause Y | Pause Y |
 | Left stick left / right / down | W / R / E | W / R / E | W / R / E |
 | Left stick up | Space (up only; no tap jump) | Space | Space |
-| Right stick up / right / down / left | J / M / H / B | J / M / H / B | P with J / M / H / B |
+| Right stick up / right / down / left | J / M / H / B | J / M / H / B | J / M / H / B |
 
 **melee**, the default new players get, is the GameCube layout by function:
 A attacks, B specials, X and Y jump (tap for a short hop, hold for a full
 hop), Z (RB) grabs, either trigger shields and LB is free. **z-jump** is the common Melee swap: Z (RB) jumps, which frees a face
 button, X, for grab. **tom** keeps X special and B grab, makes LB a dedicated
 short hop and Y an ordinary jump, and makes RB the Meter button: RB +
-Special is EX (Shield + Special still is). tom's right stick also holds
-Tilt (P), so it tilts on the ground and throws aerials in the air where the
-other presets' right stick smashes. Neither preset has a tilt/walk
+Special is EX (Shield + Special still is). No preset has a tilt/walk
 modifier; it remains a remap (`tilt`). In every preset a
 shield press during jump squat comes out as an air dodge on the first
 airborne frame (a wavedash).
+
+The right stick smashes by default. Right stick Tilt attacks (a window's
+`{"right_stick":"tilt"}` or `--right-stick smash|tilt`, saved as `"right_stick"`)
+also holds Tilt (P) while it is pushed, so it tilts on the ground and throws
+aerials in the air, in any preset.
 
 Remaps change single buttons on top of a preset, e.g. grab on LB instead of RB.
 A window sends `{"remaps":{"lb":"grab","rb":"none"}}`, which replaces the
@@ -444,7 +447,7 @@ object per line in the types of `model` (crate `wc3-controller-model`): the
 current `{"status":...}` on connect and on every change, `{"input":...}` for
 every change of the pad's state (read without grabbing it), and from the window
 `{"profile":"auto"|"map"|"any_map"|"off"}`, `{"bindings":[...]}`,
-`{"pad_preset":...}`, `{"tap_jump":...}`, `{"trigger_shields":...}` and
+`{"pad_preset":...}`, `{"tap_jump":...}`, `{"trigger_shields":...}`, `{"right_stick":...}` and
 `{"remaps":...}`. `auto`
 (the default) runs the map plug-in while it reports a session, and Any map
 otherwise. Any other profile stops the plug-in's helper, and the plug-in stops
@@ -477,7 +480,7 @@ until the pad is neutral.
 
 ### Settings
 
-The service saves the fighter layout's preset, tap jump, trigger choices and remaps in
+The service saves the fighter layout's preset, tap jump, trigger choices, right stick mode and remaps in
 `$XDG_CONFIG_HOME/wc3-controller/settings.json`, or
 `~/.config/wc3-controller/settings.json`, and restores them at startup; a
 connected window follows these choices instead of replacing them with its own

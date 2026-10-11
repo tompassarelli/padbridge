@@ -29,6 +29,7 @@ struct Options {
     preset: wc3_controller::model::PadPreset,
     tap_jump: bool,
     triggers: wc3_controller::model::TriggerShields,
+    right_stick: wc3_controller::model::RightStick,
     remaps: wc3_controller::model::Remaps,
     seconds: Option<u64>,
     gamepad: Option<u32>,
@@ -46,7 +47,7 @@ struct Options {
 }
 
 #[cfg(target_os = "linux")]
-const HELP: &str = "wc3-controller [--list] [--watch-seconds N] [--gamepad ID] [--preset melee|z-jump|tom] [--tap-jump on|off] [--left-trigger full|light] [--right-trigger full|light] [--remaps CONTROL=MOVE,...]\n\
+const HELP: &str = "wc3-controller [--list] [--watch-seconds N] [--gamepad ID] [--preset melee|z-jump|tom] [--tap-jump on|off] [--left-trigger full|light] [--right-trigger full|light] [--right-stick smash|tilt] [--remaps CONTROL=MOVE,...]\n\
                     Observation only by default. Live output additionally requires:\n\
                     --emit --display DISPLAY --x11-window DECIMAL_ID --pid PID --niri-window ID\n\
                     Or --private-wlr-app-id ID in the isolated labwc test desktop instead of --niri-window.\n\
@@ -57,7 +58,7 @@ const HELP: &str = "wc3-controller [--list] [--watch-seconds N] [--gamepad ID] [
                     --check-focus checks selected target without opening keyboard output. Windows/macOS refuse live output.";
 
 #[cfg(not(target_os = "linux"))]
-const HELP: &str = "wc3-controller [--list] [--watch-seconds N] [--gamepad ID] [--preset melee|z-jump|tom] [--tap-jump on|off] [--left-trigger full|light] [--right-trigger full|light] [--remaps CONTROL=MOVE,...]\n\
+const HELP: &str = "wc3-controller [--list] [--watch-seconds N] [--gamepad ID] [--preset melee|z-jump|tom] [--tap-jump on|off] [--left-trigger full|light] [--right-trigger full|light] [--right-stick smash|tilt] [--remaps CONTROL=MOVE,...]\n\
                     Observation only by default. --emit sends keys only while Warcraft III is the\n\
                     foreground application; add --pid PID to require one game process.\n\
                     --check-focus checks the foreground game without opening keyboard output.\n\
@@ -213,6 +214,7 @@ fn options() -> Result<Options, String> {
             "--preset" => o.preset = wc3_controller::model::PadPreset::parse(&args.next().ok_or("missing pad preset")?)?,
             "--tap-jump" => o.tap_jump = match args.next().as_deref() { Some("on") => true, Some("off") => false, _ => return Err("--tap-jump needs on or off".into()) },
             "--left-trigger" => o.triggers.left = wc3_controller::model::TriggerShield::parse(&args.next().ok_or("--left-trigger needs full or light")?)?,
+            "--right-stick" => o.right_stick = wc3_controller::model::RightStick::parse(&args.next().ok_or("--right-stick needs smash or tilt")?)?,
             "--remaps" => o.remaps = wc3_controller::model::parse_remaps(&args.next().ok_or("--remaps needs CONTROL=MOVE,...")?)?,
             "--right-trigger" => o.triggers.right = wc3_controller::model::TriggerShield::parse(&args.next().ok_or("--right-trigger needs full or light")?)?,
             "--emit" => o.emit = true,
@@ -505,6 +507,7 @@ fn run() -> Result<(), String> {
     );
     let mut mapper = EventMapper::new(o.preset);
     mapper.set_tap_jump(o.tap_jump);
+    mapper.set_right_stick(o.right_stick);
     mapper.set_trigger_shields(o.triggers);
     mapper.set_remaps(o.remaps.clone());
     mapper.set_pad_kind(wc3_controller::pad_kind(id));
