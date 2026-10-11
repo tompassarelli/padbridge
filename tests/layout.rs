@@ -1,7 +1,8 @@
 //! The README's sample: a key layout file for an ordinary map (Blizzard's
 //! melee map Echo Isles, examples/echo-isles/layout.json) served by the real
 //! `wc3-controller --service` with no map plug-in, a virtual pad and a
-//! stand-in game that records its presses. Needs a writable /dev/uinput.
+//! stand-in game that records its presses. Needs a writable /dev/uinput; without
+//! one it fails rather than passing unrun.
 #![cfg(target_os = "linux")]
 
 use evdev::{AbsInfo, AbsoluteAxisCode as Abs, AttributeSet, EventType, InputEvent, KeyCode, UinputAbsSetup, uinput::VirtualDevice};
@@ -59,10 +60,7 @@ fn presses(file: &Path) -> Vec<String> {
 
 #[test]
 fn a_layout_file_plays_an_ordinary_map_without_a_plugin() {
-    let Some((mut pad, node)) = virtual_pad() else {
-        eprintln!("skipped: /dev/uinput is not writable, so no virtual pad");
-        return;
-    };
+    let (mut pad, node) = virtual_pad().expect("could not run: /dev/uinput is not writable, so there is no virtual pad");
     until("access to the virtual pad", || fs::File::open(&node).ok());
     let root = std::env::temp_dir().join(format!("wc3-layout-{}", std::process::id()));
     let (pads, documents) = (root.join("pads"), root.join("Warcraft III"));
@@ -71,7 +69,7 @@ fn a_layout_file_plays_an_ordinary_map_without_a_plugin() {
     std::os::unix::fs::symlink(&node, pads.join("usb-Microsoft_Controller_TEST-event-joystick")).unwrap();
     fs::write(documents.join("game"), "1").unwrap();
     let layout = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/echo-isles/layout.json");
-    let _service = Service(Command::new(env!("CARGO_BIN_EXE_wc3-controller"))
+    let service = Service(Command::new(env!("CARGO_BIN_EXE_wc3-controller"))
         .args(["--service", "--layout", layout.to_str().unwrap(), "--pads", pads.to_str().unwrap(),
             "--headless", documents.to_str().unwrap(), "--status", root.join("status.txt").to_str().unwrap(),
             "--settings", root.join("settings.json").to_str().unwrap(), "--interface", "off", "--poll-ms", "20"])
@@ -80,11 +78,15 @@ fn a_layout_file_plays_an_ordinary_map_without_a_plugin() {
         .unwrap());
     let pressed = documents.join("pressed.txt");
     until("the Any map output", || pressed.exists().then_some(()));
-    // The pad watcher opens the device after the output starts.
-    thread::sleep(Duration::from_millis(500));
+    let device = fs::canonicalize(&node).unwrap();
+    let fds = PathBuf::from(format!("/proc/{}/fd", service.0.id()));
+    until("the service to open the virtual pad", || {
+        fs::read_dir(&fds).ok()?.flatten().any(|fd| fs::read_link(fd.path()).is_ok_and(|target| target == device)).then_some(())
+    });
     let mut emit = |kind: EventType, code: u16, value: i32| {
+        let before = presses(&pressed).len();
         pad.emit(&[InputEvent::new(kind.0, code, value)]).unwrap();
-        thread::sleep(Duration::from_millis(60));
+        until("the stand-in game to record the press", || (presses(&pressed).len() > before).then_some(()));
     };
     for (kind, code, high) in [
         (EventType::KEY, KeyCode::BTN_NORTH.0, 1),
