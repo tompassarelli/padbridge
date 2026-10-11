@@ -236,7 +236,11 @@ each trigger in a window, or use `--left-trigger full|light` and
 `--right-trigger full|light`. Light shield presses T and requests
 pressure 77; full shield presses Q on either trigger and requests 255. Both
 triggers share Q because it is the shield key every saved map binding has;
-contract/bindings.json is the binding contract the tests hold the service to.
+The model's preset bindings (`model::fighter_bindings_with`, `model::pad_bindings`,
+`ControllerSettings::bindings`) are the only binding list: the service presses
+them and windows show them. contract/bindings.json maps each action label to the
+Smashcraft action its key must reach, and the tests check that against the map's
+standard keys and a copy of a saved binding set (contract/tom-saved-bindings.pld).
 
 Tap jump is off by default. A window can enable it, or
 `--tap-jump on|off`. When enabled,

@@ -473,20 +473,89 @@ pub fn default_bindings() -> Vec<Binding> {
 #[cfg(test)]
 mod contract {
     use super::*;
-    use model::{Button, Control};
+    use model::{Button, Control, Move, PadKind, PadPreset, Press, TriggerShield, TriggerShields};
     use std::collections::{BTreeMap, BTreeSet};
 
     #[derive(serde::Deserialize)]
     struct Contract {
-        presets: BTreeMap<String, Preset>,
+        /// The model's action label to the Smashcraft action its key must reach.
+        map_actions: BTreeMap<String, String>,
     }
 
-    #[derive(serde::Deserialize)]
-    struct Preset {
-        settings: model::ControllerSettings,
-        #[serde(rename = "match")]
-        fight: BTreeMap<Control, Vec<String>>,
-        menus: BTreeMap<Control, Vec<String>>,
+    // Smashcraft's Action order and key saves: smashcraft:ts/src/game/input/actions.ts and keyBindings.ts
+    // (presetBindings("standard"), decodeBindings, upgradeDefaults); Y starts the match through its own trigger in shell.ts.
+    const ACTIONS: [&str; 18] = ["moveLeft", "moveRight", "moveDown", "moveUp", "jump", "attack", "special", "grab", "leftTrigger",
+        "rightTrigger", "smashLeft", "smashRight", "smashUp", "smashDown", "walk", "lightShield", "shortHop", "meter"];
+
+    fn code(key: &str) -> u8 {
+        if key == "space" { 32 } else { key.to_ascii_uppercase().as_bytes()[0] }
+    }
+
+    fn standard() -> Vec<[u8; 2]> {
+        vec![[b'W', 0], [b'R', 0], [b'E', 0], [32, 0], [b'I', b'8'], [b'N', 0], [b'U', 0], [b'O', 0], [b'Q', 0], [b'7', 0],
+            [b'B', 191], [b'M', 0], [b'J', 0], [b'H', 0], [b'P', 0], [b'9', b'T'], [b'Z', 0], [b'X', 0]]
+    }
+
+    fn saved(file: &str) -> Vec<[u8; 2]> {
+        let start = file.find("\"K").unwrap() + 1;
+        let version = &file[start..start + 2];
+        let digits: String = file[start + 2..].chars().take_while(char::is_ascii_digit).collect();
+        let mut keys = vec![[0u8; 2]; ACTIONS.len()];
+        for (index, chunk) in digits.as_bytes().chunks(3).enumerate() {
+            let key: u8 = std::str::from_utf8(chunk).unwrap().parse().unwrap();
+            if key != b'Y' { keys[index / 2][index % 2] = key; }
+        }
+        let action = |name: &str| ACTIONS.iter().position(|a| *a == name).unwrap();
+        let free = |keys: &[[u8; 2]], candidates: &[u8]| candidates.iter().all(|c| !keys.iter().flatten().any(|k| k == c));
+        if keys[action("lightShield")][1] == 0 && free(&keys, b"T") { keys[action("lightShield")][1] = b'T'; }
+        if keys[action("meter")][0] == 0 && free(&keys, b"X") { keys[action("meter")][0] = b'X'; }
+        // Map-side, owned by smashcraft-lead: shortHop was unbound in Tom's K1 save until upgradeDefaults gave it Z.
+        if keys[action("shortHop")][0] == 0 && free(&keys, b"Z") { keys[action("shortHop")][0] = b'Z'; }
+        if version == "K1" && free(&keys, b"P") { keys[action("walk")][0] = b'P'; }
+        if keys[action("grab")][0] == b'L' && free(&keys, b"O") { keys[action("grab")][0] = b'O'; }
+        if keys[action("walk")][0] == 186 && free(&keys, b"P") { keys[action("walk")][0] = b'P'; }
+        if keys[action("moveLeft")][0] == b'S' && keys[action("moveRight")][0] == b'F' && keys[action("moveDown")][0] == b'D'
+            && keys[action("leftTrigger")][0] == b'A' && free(&keys, b"QWER") {
+            for (name, key) in [("moveLeft", b'W'), ("moveRight", b'R'), ("moveDown", b'E'), ("leftTrigger", b'Q')] { keys[action(name)][0] = key; }
+        }
+        keys
+    }
+
+    fn bound(keys: &[[u8; 2]], key: &str) -> Option<&'static str> {
+        if key == "y" { return Some("start"); }
+        keys.iter().position(|slots| slots.contains(&code(key))).map(|index| ACTIONS[index])
+    }
+
+    fn key(press: &Press) -> Option<String> {
+        match press {
+            Press::Key(name) => Some(name.clone()),
+            Press::LeftClick => Some("left-click".into()),
+            Press::RightClick => Some("right-click".into()),
+            Press::Pointer => None,
+        }
+    }
+
+    const PRESETS: [PadPreset; 3] = PadPreset::ALL;
+    const SHIELDS: [TriggerShield; 2] = [TriggerShield::Full, TriggerShield::Light];
+
+    #[test]
+    fn every_preset_key_reaches_its_labelled_action_in_the_maps_defaults_and_toms_saved_bindings() {
+        let contract: Contract = serde_json::from_str(include_str!("../../contract/bindings.json")).unwrap();
+        let sets = [("the map's standard keys", standard()), ("tom-saved-bindings.pld", saved(include_str!("../../contract/tom-saved-bindings.pld")))];
+        for (set, keys) in &sets {
+            for preset in PRESETS {
+                for (left, right) in SHIELDS.into_iter().flat_map(|left| SHIELDS.map(|right| (left, right))) {
+                    for binding in model::fighter_bindings_with(preset, TriggerShields { left, right }) {
+                        let Press::Key(sent) = &binding.press else { continue };
+                        let wanted = contract.map_actions.get(&binding.action)
+                            .unwrap_or_else(|| panic!("{} {:?} is labelled {:?}, which the contract leaves out", preset.name(), binding.control, binding.action));
+                        let reached = bound(keys, sent);
+                        let ok = match wanted.as_str() { "shield" => matches!(reached, Some("leftTrigger" | "rightTrigger")), action => reached == Some(action) };
+                        assert!(ok, "{} {:?} {:?} sends {sent:?}, which {set} binds to {reached:?}", preset.name(), binding.control, binding.action);
+                    }
+                }
+            }
+        }
     }
 
     #[derive(Default)]
@@ -566,13 +635,17 @@ mod contract {
     }
 
     #[test]
-    fn the_service_presses_what_toms_binding_contract_says_on_every_screen() {
-        let contract: Contract = serde_json::from_str(include_str!("../../contract/bindings.json")).unwrap();
+    fn the_service_presses_the_models_bindings_on_every_screen() {
         let mut rng = Rng(std::env::var("PROPERTY_SEED").ok().and_then(|seed| seed.parse().ok()).unwrap_or(0xc0ffee));
-        for (name, preset) in &contract.presets {
-            for (screen, table) in [("match", &preset.fight), ("menus", &preset.menus)] {
+        for preset in PRESETS {
+            let triggers = TriggerShields { left: SHIELDS[rng.below(2) as usize], right: SHIELDS[rng.below(2) as usize] };
+            let settings = model::ControllerSettings { pad_preset: preset, triggers, ..Default::default() };
+            let tilt = model::remap(Vec::new(), &[(Control::Lb, Move::Tilt)].into(), triggers).remove(0).press;
+            let fight = settings.bindings(PadKind::Xbox);
+            let menus = menu_bindings(true);
+            for (screen, table) in [("match", &fight), ("menus", &menus)] {
                 let mut driver = match screen {
-                    "match" => Driver::keys_for(&preset.settings, crate::pad_ingress::Route::Digital),
+                    "match" => Driver::keys_for(&settings, crate::pad_ingress::Route::Digital),
                     _ => Driver::menu(MenuCurve::for_window_width(2560.0), true),
                 };
                 let mut out = Recorded::default();
@@ -581,18 +654,23 @@ mod contract {
                     let (input, controls) = generate(&mut rng);
                     out.moved = false;
                     driver.step(&input, true, 0.01, &mut out).unwrap();
-                    let wanted: BTreeSet<String> = controls.iter()
-                        .flat_map(|control| table.get(control).unwrap_or_else(|| panic!("{name} {screen}: the contract leaves {control:?} out")).iter().cloned())
-                        .collect();
-                    let pointer = wanted.contains("pointer");
-                    let keys: BTreeSet<String> = wanted.into_iter().filter(|output| output != "pointer").collect();
-                    assert_eq!(out.held, keys, "{name} {screen}: holding {controls:?}");
-                    assert_eq!(out.moved, pointer, "{name} {screen}: pointer while holding {controls:?}");
+                    let mut presses: Vec<&Press> = table.iter().filter(|b| controls.contains(&b.control)).map(|b| &b.press).collect();
+                    if screen == "match" && preset == PadPreset::Tom && controls.iter().any(|c| RIGHT.contains(c)) {
+                        presses.push(&tilt);
+                    }
+                    let keys: BTreeSet<String> = presses.iter().filter_map(|p| key(p)).collect();
+                    let pointer = screen == "menus" && controls.iter().any(|c| LEFT.contains(c));
+                    assert_eq!(out.held, keys, "{} {screen}: holding {controls:?}", preset.name());
+                    assert_eq!(out.moved, pointer, "{} {screen}: pointer while holding {controls:?}", preset.name());
                     driver.step(&InputView::default(), true, 0.0, &mut out).unwrap();
-                    assert!(out.held.is_empty(), "{name} {screen}: {:?} still held at neutral", out.held);
+                    assert!(out.held.is_empty(), "{} {screen}: {:?} still held at neutral", preset.name(), out.held);
                 }
             }
         }
+        let shields: Vec<_> = model::fighter_bindings_with(PadPreset::Tom, TriggerShields::default()).into_iter()
+            .filter(|b| matches!(b.control, Control::Lt | Control::Rt)).map(|b| b.action).collect();
+        assert_eq!(shields, ["Shield", "Shield"], "LT and RT both shield");
+        assert!(menu_bindings(true).iter().any(|b| b.control == Control::Start && b.press == Press::Key("y".into())), "Start presses Y in menus");
     }
 }
 
