@@ -1,0 +1,54 @@
+{
+  "about": "Tom's binding contract: what each pad input presses, per screen, for the presets he plays. Keys are the names the service sends; a list is every output the input holds. src/service/any_map.rs checks the service against it.",
+  "rules": [
+    "LT and RT both shield.",
+    "Start starts the match regardless of cursor position: it presses the Y key on every screen and never clicks."
+  ],
+  "presets": {
+    "tom": {
+      "settings": { "pad_preset": "tom", "tap_jump": false, "triggers": { "left": "full", "right": "full" } },
+      "match": {
+        "a": ["n"],
+        "b": ["o"],
+        "x": ["u"],
+        "y": ["i"],
+        "lb": ["z"],
+        "rb": ["x"],
+        "lt": ["q"],
+        "rt": ["q"],
+        "start": ["y"],
+        "back": [],
+        "left_stick": [],
+        "left_left": ["w"],
+        "left_right": ["r"],
+        "left_down": ["e"],
+        "left_up": ["space"],
+        "right_left": ["b", "p"],
+        "right_right": ["m", "p"],
+        "right_up": ["j", "p"],
+        "right_down": ["h", "p"]
+      },
+      "menus": {
+        "a": ["left-click"],
+        "b": ["right-click"],
+        "x": [],
+        "y": [],
+        "lb": [],
+        "rb": [],
+        "lt": [],
+        "rt": [],
+        "start": ["y"],
+        "back": [],
+        "left_stick": [],
+        "left_left": ["pointer"],
+        "left_right": ["pointer"],
+        "left_down": ["pointer"],
+        "left_up": ["pointer"],
+        "right_left": [],
+        "right_right": [],
+        "right_up": [],
+        "right_down": []
+      }
+    }
+  }
+}

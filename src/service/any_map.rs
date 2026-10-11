@@ -110,6 +110,17 @@ impl Driver {
         Self { mapper: Mapper::new(Vec::new()), focused: false, menu: None, keys: Some(crate::Mapper::new(preset)), analog: crate::pad_ingress::Ingress::new(route) }
     }
 
+    /// The fighter layout on keys with the player's settings.
+    pub fn keys_for(settings: &model::ControllerSettings, route: crate::pad_ingress::Route) -> Self {
+        let mut driver = Self::keys_with_ingress(settings.pad_preset, route);
+        if let Some(mapper) = &mut driver.keys {
+            mapper.set_tap_jump(settings.tap_jump);
+            mapper.set_trigger_shields(settings.triggers);
+            mapper.set_remaps(settings.remaps.clone());
+        }
+        driver
+    }
+
     fn deliver_keys(transitions: Vec<crate::Transition>, out: &mut dyn Output) -> Result<(), String> {
         for transition in transitions {
             let key = match transition.action.key() { ' ' => "space".to_owned(), key => key.to_string() };
@@ -401,18 +412,9 @@ pub fn spawn(window: Window, mode: Mode, feed: mpsc::Receiver<Feed>, stop: Arc<A
                 };
                 Driver::menu(MenuCurve::for_window_width(width), start_on_keys)
             }
-            Mode::Keys(settings) => {
-                let route = match crate::pad_ingress::Route::from_env() {
-                    Ok(route) => route,
-                    Err(error) => { eprintln!("service: {error}"); return; }
-                };
-                let mut driver = Driver::keys_with_ingress(settings.pad_preset, route);
-                if let Some(mapper) = &mut driver.keys {
-                    mapper.set_tap_jump(settings.tap_jump);
-                    mapper.set_trigger_shields(settings.triggers);
-                    mapper.set_remaps(settings.remaps);
-                }
-                driver
+            Mode::Keys(settings) => match crate::pad_ingress::Route::from_env() {
+                Ok(route) => Driver::keys_for(&settings, route),
+                Err(error) => { eprintln!("service: {error}"); return; }
             },
         };
         let mut input = InputView::default();
@@ -466,6 +468,132 @@ pub fn spawn(window: Window, mode: Mode, feed: mpsc::Receiver<Feed>, stop: Arc<A
 /// The default layout for melee Warcraft III.
 pub fn default_bindings() -> Vec<Binding> {
     model::any_map_bindings()
+}
+
+#[cfg(test)]
+mod contract {
+    use super::*;
+    use model::{Button, Control};
+    use std::collections::{BTreeMap, BTreeSet};
+
+    #[derive(serde::Deserialize)]
+    struct Contract {
+        presets: BTreeMap<String, Preset>,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct Preset {
+        settings: model::ControllerSettings,
+        #[serde(rename = "match")]
+        fight: BTreeMap<Control, Vec<String>>,
+        menus: BTreeMap<Control, Vec<String>>,
+    }
+
+    #[derive(Default)]
+    struct Recorded {
+        held: BTreeSet<String>,
+        moved: bool,
+    }
+
+    impl Output for Recorded {
+        fn key(&mut self, name: &str, down: bool) -> Result<(), String> {
+            self.press(name.to_owned(), down);
+            Ok(())
+        }
+        fn click(&mut self, right: bool, down: bool) -> Result<(), String> {
+            self.press(if right { "right-click" } else { "left-click" }.to_owned(), down);
+            Ok(())
+        }
+        fn pointer(&mut self, _: f64, _: f64) -> Result<(), String> {
+            self.moved = true;
+            Ok(())
+        }
+    }
+
+    impl Recorded {
+        fn press(&mut self, name: String, down: bool) {
+            if down {
+                assert!(self.held.insert(name.clone()), "{name} pressed twice");
+            } else {
+                assert!(self.held.remove(&name), "{name} released while up");
+            }
+        }
+    }
+
+    struct Rng(u64);
+
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
+            let mut z = self.0;
+            z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+            z ^ (z >> 31)
+        }
+        fn below(&mut self, n: u64) -> u64 {
+            self.next() % n
+        }
+    }
+
+    const BUTTONS: [(Control, Button); 9] = [
+        (Control::A, Button::A), (Control::B, Button::B), (Control::X, Button::X), (Control::Y, Button::Y), (Control::Lb, Button::Lb),
+        (Control::Rb, Button::Rb), (Control::Start, Button::Start), (Control::Back, Button::Back), (Control::LeftStick, Button::LeftStick),
+    ];
+    const LEFT: [Control; 4] = [Control::LeftLeft, Control::LeftRight, Control::LeftUp, Control::LeftDown];
+    const RIGHT: [Control; 4] = [Control::RightLeft, Control::RightRight, Control::RightUp, Control::RightDown];
+
+    /// A pad with some controls clearly held: buttons, triggers past their threshold, and each stick neutral or tilted to one side.
+    fn generate(rng: &mut Rng) -> (InputView, BTreeSet<Control>) {
+        let mut input = InputView::default();
+        let mut held = BTreeSet::new();
+        for (control, button) in BUTTONS {
+            if rng.below(4) == 0 {
+                input.press(button, true);
+                held.insert(control);
+            }
+        }
+        for (control, value) in [(Control::Lt, &mut input.lt), (Control::Rt, &mut input.rt)] {
+            *value = if rng.below(3) == 0 { held.insert(control); 4001 + rng.below(28767) as u16 } else { rng.below(4001) as u16 };
+        }
+        for (directions, stick) in [(LEFT, &mut input.left), (RIGHT, &mut input.right)] {
+            let pick = rng.below(6) as usize;
+            let Some(&direction) = directions.get(pick) else { continue };
+            let tilt = 29491 + rng.below(3277) as i16;
+            *stick = match pick { 0 => [-tilt, 0], 1 => [tilt, 0], 2 => [0, -tilt], _ => [0, tilt] };
+            held.insert(direction);
+        }
+        (input, held)
+    }
+
+    #[test]
+    fn the_service_presses_what_toms_binding_contract_says_on_every_screen() {
+        let contract: Contract = serde_json::from_str(include_str!("../../contract/bindings.json")).unwrap();
+        let mut rng = Rng(std::env::var("PROPERTY_SEED").ok().and_then(|seed| seed.parse().ok()).unwrap_or(0xc0ffee));
+        for (name, preset) in &contract.presets {
+            for (screen, table) in [("match", &preset.fight), ("menus", &preset.menus)] {
+                let mut driver = match screen {
+                    "match" => Driver::keys_for(&preset.settings, crate::pad_ingress::Route::Digital),
+                    _ => Driver::menu(MenuCurve::for_window_width(2560.0), true),
+                };
+                let mut out = Recorded::default();
+                driver.step(&InputView::default(), true, 0.0, &mut out).unwrap();
+                for _ in 0..400 {
+                    let (input, controls) = generate(&mut rng);
+                    out.moved = false;
+                    driver.step(&input, true, 0.01, &mut out).unwrap();
+                    let wanted: BTreeSet<String> = controls.iter()
+                        .flat_map(|control| table.get(control).unwrap_or_else(|| panic!("{name} {screen}: the contract leaves {control:?} out")).iter().cloned())
+                        .collect();
+                    let pointer = wanted.contains("pointer");
+                    let keys: BTreeSet<String> = wanted.into_iter().filter(|output| output != "pointer").collect();
+                    assert_eq!(out.held, keys, "{name} {screen}: holding {controls:?}");
+                    assert_eq!(out.moved, pointer, "{name} {screen}: pointer while holding {controls:?}");
+                    driver.step(&InputView::default(), true, 0.0, &mut out).unwrap();
+                    assert!(out.held.is_empty(), "{name} {screen}: {:?} still held at neutral", out.held);
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -549,7 +677,7 @@ mod tests {
     #[test]
     fn the_keys_mapper_and_the_shown_fighter_layout_agree() {
         let all = [
-            crate::Action::Attack, crate::Action::Special, crate::Action::Jump, crate::Action::ShortHop, crate::Action::Grab, crate::Action::Shield, crate::Action::RightShield, crate::Action::LightShield, crate::Action::Walk, crate::Action::Meter,
+            crate::Action::Attack, crate::Action::Special, crate::Action::Jump, crate::Action::ShortHop, crate::Action::Grab, crate::Action::Shield, crate::Action::LightShield, crate::Action::Walk, crate::Action::Meter,
             crate::Action::Start, crate::Action::Left, crate::Action::Right, crate::Action::Down, crate::Action::Up,
             crate::Action::CLeft, crate::Action::CRight, crate::Action::CUp, crate::Action::CDown,
         ];

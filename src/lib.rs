@@ -66,7 +66,6 @@ pub enum Action {
     ShortHop,
     Grab,
     Shield,
-    RightShield,
     LightShield,
     Walk,
     Meter,
@@ -82,7 +81,7 @@ pub enum Action {
 }
 
 impl Action {
-    const BUTTONS: [Self; 11] = [Self::Attack, Self::Special, Self::Jump, Self::ShortHop, Self::Grab, Self::Shield, Self::RightShield, Self::LightShield, Self::Walk, Self::Meter, Self::Start];
+    const BUTTONS: [Self; 10] = [Self::Attack, Self::Special, Self::Jump, Self::ShortHop, Self::Grab, Self::Shield, Self::LightShield, Self::Walk, Self::Meter, Self::Start];
 
     fn of_press(press: &model::Press) -> Option<Self> {
         let model::Press::Key(name) = press else { return None };
@@ -97,7 +96,6 @@ impl Action {
             Self::ShortHop => 'z',
             Self::Grab => 'o',
             Self::Shield => 'q',
-            Self::RightShield => '7',
             Self::LightShield => 't',
             Self::Walk => 'p',
             Self::Meter => 'x',
@@ -349,7 +347,7 @@ impl Mapper {
             _ => false,
         };
         let buttons: BTreeSet<Action> = self.buttons.iter().filter(|(control, _)| down(*control)).map(|&(_, action)| action).collect();
-        let stick_jump = stick::tap_jump(left_y, self.tap_jump, buttons.contains(&Action::Walk), [Action::Shield, Action::RightShield, Action::LightShield].iter().any(|shield| buttons.contains(shield)));
+        let stick_jump = stick::tap_jump(left_y, self.tap_jump, buttons.contains(&Action::Walk), [Action::Shield, Action::LightShield].iter().any(|shield| buttons.contains(shield)));
         // Union source states before diffing, so releasing one source never
         // releases an action another source still owns.
         let right_stick_tilts = self.preset == model::PadPreset::Tom && (right_x != 0 || right_y != 0);
@@ -455,11 +453,11 @@ mod tests {
         };
         assert_eq!(tick(&mut map, &s), vec![edge(Action::LightShield, true)]);
         s.right_trigger = 30000;
-        assert_eq!(tick(&mut map, &s), vec![edge(Action::RightShield, true)]);
+        assert_eq!(tick(&mut map, &s), vec![edge(Action::Shield, true)]);
         s.left_trigger = 0;
         assert_eq!(tick(&mut map, &s), vec![edge(Action::LightShield, false)]);
         s.right_trigger = 0;
-        assert_eq!(tick(&mut map, &s), vec![edge(Action::RightShield, false)]);
+        assert_eq!(tick(&mut map, &s), vec![edge(Action::Shield, false)]);
     }
 
     #[test]
@@ -742,23 +740,10 @@ mod tests {
     }
 
     #[test]
-    fn holding_lt_then_pressing_rt_presses_a_new_shield_key() {
-        for preset in [model::PadPreset::Melee, model::PadPreset::ZJump] {
-            let mut mapper = EventMapper::new(preset);
-            mapper.resync(&Sample::default(), true);
-            assert_eq!(capture(&mut mapper, &axis(1, 1, Axis::TriggerLeft, 20_000), 1), vec![edge(Action::Shield, true)]);
-            assert_eq!(capture(&mut mapper, &axis(2, 1, Axis::TriggerRight, 20_000), 1), vec![edge(Action::RightShield, true)]);
-            assert_ne!(Action::RightShield.key(), Action::Shield.key());
-            assert_eq!(capture(&mut mapper, &axis(3, 1, Axis::TriggerLeft, 0), 1), vec![edge(Action::Shield, false)]);
-            assert_eq!(capture(&mut mapper, &axis(4, 1, Axis::TriggerRight, 0), 1), vec![edge(Action::RightShield, false)]);
-        }
-    }
-
-    #[test]
     fn presets_map_their_buttons_and_all_four_trigger_choices() {
         use model::{PadKind, PadPreset, TriggerShield, TriggerShields};
         let action = |mode| if mode == TriggerShield::Full { Action::Shield } else { Action::LightShield };
-        let right_action = |mode| if mode == TriggerShield::Full { Action::RightShield } else { Action::LightShield };
+        let right_action = action;
         let presses = |preset, kind| -> Vec<(Sample, Action)> {
             let (x, b) = (Sample { x: true, ..Sample::default() }, Sample { b: true, ..Sample::default() });
             let (b, x) = if kind == PadKind::GameCube { (x, b) } else { (b, x) };
@@ -786,7 +771,7 @@ mod tests {
                     let mut sample = Sample { left_trigger: 20_000, ..Sample::default() };
                     assert_eq!(tick(&mut map, &sample), vec![edge(action(left), true)]);
                     sample.right_trigger = 20_000;
-                    let shared = left == TriggerShield::Light && right == TriggerShield::Light;
+                    let shared = left == right;
                     assert_eq!(tick(&mut map, &sample), if shared { vec![] } else { vec![edge(right_action(right), true)] });
                     sample.left_trigger = 0;
                     assert_eq!(tick(&mut map, &sample), if shared { vec![] } else { vec![edge(action(left), false)] });

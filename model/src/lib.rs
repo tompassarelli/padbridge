@@ -430,7 +430,6 @@ pub fn parse_remaps(text: &str) -> Result<Remaps, String> {
 fn shield(control: Control, triggers: TriggerShields) -> Binding {
     let mode = match control { Control::Lt => triggers.left, Control::Rt => triggers.right, _ => TriggerShield::Full };
     match (control, mode) {
-        (Control::Rt, TriggerShield::Full) => bind(control, "Shield", key("7")),
         (_, TriggerShield::Full) => bind(control, "Shield", key("q")),
         (_, TriggerShield::Light) => bind(control, "Light shield", key("t")),
     }
@@ -727,7 +726,7 @@ mod tests {
             assert_eq!(controls.map(|control| pressed(preset, control)), actions.map(str::to_owned), "{}", preset.name());
             assert_eq!(PadPreset::parse(preset.name()), Ok(preset));
             let shields = fighter_bindings_for(preset).into_iter().filter(|b| b.action == "Shield").map(|b| (b.control, b.press)).collect::<Vec<_>>();
-            assert_eq!(shields, [(Lt, key("q")), (Rt, key("7"))], "{}", preset.name());
+            assert_eq!(shields, [(Lt, key("q")), (Rt, key("q"))], "{}", preset.name());
         }
         assert_eq!(PadPreset::default(), PadPreset::Melee);
         assert!(PadPreset::parse("standard").is_err());
