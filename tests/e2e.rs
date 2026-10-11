@@ -505,7 +505,7 @@ fn helper_types_the_layout_only_into_the_focused_game() {
     // The helper watches exactly one pad, so it must exist before the helper starts.
     let pad = pad::Pad::connect();
     let mut args = pad::HELPER_ARGS.to_vec();
-    args.extend(["--emit", "--watch-seconds", "600"]);
+    args.extend(["--preset", "script", "--emit", "--watch-seconds", "600"]);
     let helper = Process::spawn(Path::new(HELPER), &args);
     let mut h = Harness {
         helper,
