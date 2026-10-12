@@ -529,8 +529,8 @@ fn helper_types_the_layout_only_into_the_focused_game() {
         h.report()
     );
 
-    // Fighter layout: A attack, X special, B/Y jump, RB grab, either trigger
-    // shield, LB walk, stick directions (stick-up is only up), Start pause,
+    // Fighter layout: A attack, X special, B/Y jump, RB grab, LT shield on Q
+    // and RT on G, LB walk, stick directions (stick-up is only up), Start pause,
     // and the right stick's four C-stick directions.
     for (press, release, keys) in [
         ("button a 1", "button a 0", vec!["n"]),
@@ -551,7 +551,7 @@ fn helper_types_the_layout_only_into_the_focused_game() {
         (
             "axis righttrigger 32767",
             "axis righttrigger -32768",
-            vec!["q"],
+            vec!["g"],
         ),
         ("button leftshoulder 1", "button leftshoulder 0", vec!["p"]),
         ("axis leftx -32768", "axis leftx 0", vec!["w"]),
@@ -576,10 +576,11 @@ fn helper_types_the_layout_only_into_the_focused_game() {
         h.step(first.1, &[]);
         h.step(second.1, &[up("i")]);
     }
+    // RT pressed while LT is held is a fresh right-trigger press.
     h.step("axis lefttrigger 32767", &[down("q")]);
-    h.step("axis righttrigger 32767", &[]);
-    h.step("axis lefttrigger -32768", &[]);
-    h.step("axis righttrigger -32768", &[up("q")]);
+    h.step("axis righttrigger 32767", &[down("g")]);
+    h.step("axis lefttrigger -32768", &[up("q")]);
+    h.step("axis righttrigger -32768", &[up("g")]);
 
     // Focus loss releases held keys at the OS and suppresses later presses.
     h.step("button a 1", &[down("n")]);
