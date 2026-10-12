@@ -493,7 +493,7 @@ mod contract {
     }
 
     fn standard() -> Vec<[u8; 2]> {
-        vec![[b'W', 0], [b'R', 0], [b'E', 0], [32, 0], [b'I', b'8'], [b'N', 0], [b'U', 0], [b'O', 0], [b'Q', 0], [b'7', 0],
+        vec![[b'W', 0], [b'R', 0], [b'E', 0], [32, 0], [b'I', b'8'], [b'N', 0], [b'U', 0], [b'O', 0], [b'Q', 0], [b'7', b'G'],
             [b'B', 191], [b'M', 0], [b'J', 0], [b'H', 0], [b'P', 0], [b'9', b'T'], [b'Z', 0], [b'X', 0]]
     }
 
@@ -510,6 +510,7 @@ mod contract {
         let free = |keys: &[[u8; 2]], candidates: &[u8]| candidates.iter().all(|c| !keys.iter().flatten().any(|k| k == c));
         if keys[action("lightShield")][1] == 0 && free(&keys, b"T") { keys[action("lightShield")][1] = b'T'; }
         if keys[action("meter")][0] == 0 && free(&keys, b"X") { keys[action("meter")][0] = b'X'; }
+        if keys[action("rightTrigger")][1] == 0 && free(&keys, b"G") { keys[action("rightTrigger")][1] = b'G'; }
         // Map-side, owned by smashcraft-lead: shortHop was unbound in Tom's K1 save until upgradeDefaults gave it Z.
         if keys[action("shortHop")][0] == 0 && free(&keys, b"Z") { keys[action("shortHop")][0] = b'Z'; }
         if version == "K1" && free(&keys, b"P") { keys[action("walk")][0] = b'P'; }
@@ -671,7 +672,16 @@ mod contract {
         }
         let shields: Vec<_> = model::fighter_bindings_with(PadPreset::Tom, TriggerShields::default(), model::RightStick::default()).into_iter()
             .filter(|b| matches!(b.control, Control::Lt | Control::Rt)).map(|b| b.action).collect();
-        assert_eq!(shields, ["Shield", "Shield"], "LT and RT both shield");
+        assert_eq!(shields, ["Shield", "Right shield"], "LT and RT both shield");
+        for preset in [PadPreset::Melee, PadPreset::ZJump] {
+            let settings = model::ControllerSettings { pad_preset: preset, ..Default::default() };
+            let mut driver = Driver::keys_for(&settings, crate::pad_ingress::Route::Digital);
+            let mut out = Recorded::default();
+            for input in [InputView::default(), InputView { lt: 20000, ..Default::default() }, InputView { lt: 20000, rt: 20000, ..Default::default() }] {
+                driver.step(&input, true, 0.0, &mut out).unwrap();
+            }
+            assert_eq!(out.held, ["g", "q"].map(String::from).into(), "{}: RT pressed while LT is held", preset.name());
+        }
         assert!(menu_bindings(true).iter().any(|b| b.control == Control::Start && b.press == Press::Key("y".into())), "Start presses Y in menus");
     }
 }

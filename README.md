@@ -186,7 +186,7 @@ Three presets choose the buttons; sticks and Start are the same in all of them.
 | RB | Grab O | Jump I | Meter X (+ Special: EX) |
 | LB | — | — | Short hop Z (even held) |
 | LT | Shield Q | Shield Q | Shield Q |
-| RT | Shield Q | Shield Q | Shield Q |
+| RT | Shield G (right trigger) | Shield G (right trigger) | Shield G (right trigger) |
 | Start | Pause Y | Pause Y | Pause Y |
 | Left stick left / right / down | W / R / E | W / R / E | W / R / E |
 | Left stick up | Space (up only; no tap jump) | Space | Space |
@@ -194,7 +194,7 @@ Three presets choose the buttons; sticks and Start are the same in all of them.
 
 **melee**, the default new players get, is the GameCube layout by function:
 A attacks, B specials, X and Y jump (tap for a short hop, hold for a full
-hop), Z (RB) grabs, either trigger shields and LB is free. **z-jump** is the common Melee swap: Z (RB) jumps, which frees a face
+hop), Z (RB) grabs, either trigger shields (RT on its own key, so pressing it while holding LT is a fresh press) and LB is free. **z-jump** is the common Melee swap: Z (RB) jumps, which frees a face
 button, X, for grab. **tom** keeps X special and B grab, makes LB a dedicated
 short hop and Y an ordinary jump, and makes RB the Meter button: RB +
 Special is EX (Shield + Special still is). No preset has a tilt/walk

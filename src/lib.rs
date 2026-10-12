@@ -66,6 +66,7 @@ pub enum Action {
     ShortHop,
     Grab,
     Shield,
+    RightShield,
     LightShield,
     Walk,
     Meter,
@@ -81,7 +82,7 @@ pub enum Action {
 }
 
 impl Action {
-    const BUTTONS: [Self; 10] = [Self::Attack, Self::Special, Self::Jump, Self::ShortHop, Self::Grab, Self::Shield, Self::LightShield, Self::Walk, Self::Meter, Self::Start];
+    const BUTTONS: [Self; 11] = [Self::Attack, Self::Special, Self::Jump, Self::ShortHop, Self::Grab, Self::Shield, Self::RightShield, Self::LightShield, Self::Walk, Self::Meter, Self::Start];
 
     fn of_press(press: &model::Press) -> Option<Self> {
         let model::Press::Key(name) = press else { return None };
@@ -96,6 +97,7 @@ impl Action {
             Self::ShortHop => 'z',
             Self::Grab => 'o',
             Self::Shield => 'q',
+            Self::RightShield => 'g',
             Self::LightShield => 't',
             Self::Walk => 'p',
             Self::Meter => 'x',
@@ -336,7 +338,7 @@ impl Mapper {
             _ => false,
         };
         let buttons: BTreeSet<Action> = self.buttons.iter().filter(|(control, _)| down(*control)).map(|&(_, action)| action).collect();
-        let stick_jump = stick::tap_jump(left_y, self.tap_jump, buttons.contains(&Action::Walk), [Action::Shield, Action::LightShield].iter().any(|shield| buttons.contains(shield)));
+        let stick_jump = stick::tap_jump(left_y, self.tap_jump, buttons.contains(&Action::Walk), [Action::Shield, Action::RightShield, Action::LightShield].iter().any(|shield| buttons.contains(shield)));
         // Union source states before diffing, so releasing one source never
         // releases an action another source still owns.
         let right_stick_tilts = self.right_stick == model::RightStick::Tilt && (right_x != 0 || right_y != 0);
@@ -436,6 +438,7 @@ mod properties {
             let mode = match control { Pad::Lt => config.triggers.left, Pad::Rt => config.triggers.right, _ => TriggerShield::Full };
             match (control, mode) {
                 (_, TriggerShield::Light) => LightShield,
+                (Pad::Rt, _) => RightShield,
                 _ => Shield,
             }
         };
@@ -489,7 +492,7 @@ mod properties {
         let (lx, ly) = stick::melee_stick(s.left_x, s.left_y);
         let (rx, ry) = stick::c_stick(s.right_x, s.right_y);
         let tilt = held.contains(&Action::Walk);
-        let shield = [Action::Shield, Action::LightShield].iter().any(|a| held.contains(a));
+        let shield = [Action::Shield, Action::RightShield, Action::LightShield].iter().any(|a| held.contains(a));
         let up = -f32::from(ly) / 32_767.0;
         let up = if tilt && shield { up.min(0.65) } else { up };
         let directions = [
@@ -652,7 +655,7 @@ mod properties {
 
         // The keys pressed are the keys the window shows for the same controls.
         let mut keys = BTreeSet::new();
-        let all = [Action::Attack, Action::Special, Action::Jump, Action::ShortHop, Action::Grab, Action::Shield, Action::LightShield, Action::Walk, Action::Meter,
+        let all = [Action::Attack, Action::Special, Action::Jump, Action::ShortHop, Action::Grab, Action::Shield, Action::RightShield, Action::LightShield, Action::Walk, Action::Meter,
             Action::Start, Action::Left, Action::Right, Action::Down, Action::Up, Action::CLeft, Action::CRight, Action::CUp, Action::CDown];
         for action in all {
             assert!(keys.insert(action.key()), "{action:?} shares its key");

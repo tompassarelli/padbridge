@@ -450,6 +450,7 @@ pub fn parse_remaps(text: &str) -> Result<Remaps, String> {
 fn shield(control: Control, triggers: TriggerShields) -> Binding {
     let mode = match control { Control::Lt => triggers.left, Control::Rt => triggers.right, _ => TriggerShield::Full };
     match (control, mode) {
+        (Control::Rt, TriggerShield::Full) => bind(control, "Right shield", key("g")),
         (_, TriggerShield::Full) => bind(control, "Shield", key("q")),
         (_, TriggerShield::Light) => bind(control, "Light shield", key("t")),
     }
