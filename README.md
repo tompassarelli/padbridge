@@ -7,6 +7,32 @@ and macOS get the same controller-as-keys mapper as a foreground helper
 (`wc3-controller --emit`). SDL3 owns discovery, normalization and adapter
 protocols; enigo delivers key transitions. MIT licence (LICENSE).
 
+## Respecting Blizzard's IP
+
+This project copies nothing from Blizzard, and it never touches the game.
+
+- It reads the controller and sends ordinary operating-system key, click and
+  pointer events to the focused Warcraft III window, the way a keyboard and
+  mouse do. It does not read or write the game's memory, inject code, patch the
+  game, or touch other players' games or Blizzard's services.
+- No Blizzard code, art, models, textures, sounds, music, data tables, game
+  scripts (`common.j`, `blizzard.j` bodies) or in-game text is committed or
+  distributed. Short identifying quotes and native names are fine.
+- Behaviour comes only from black-box observation of the game as a player sees
+  it (what it displays, the keys it accepts, files it writes) and from public
+  documentation: never from disassembly, decompilation, decrypted or dumped
+  executables, debugger sessions, or memory reads.
+- No DRM bypass, no Battle.net sign-in emulation, no cheating or anti-cheat
+  evasion. "Warcraft" stays out of product names and logos; "works with your
+  Warcraft III install" is fine.
+- No Warsmash (AGPL) code.
+
+Private local test tools, if anyone runs them, live outside every repository
+and never feed this code. `model/tests/clean_room.rs` runs in `cargo test` and
+CI and refuses memory-access APIs, game-format files and addresses into the game
+binary. The long form is
+[wisp's docs/clean-room.md](https://github.com/tompassarelli/wisp/blob/main/docs/clean-room.md).
+
 Two ways for a map to support a controller:
 
 - **A key layout file** (no code): the Any map profile presses the keys your

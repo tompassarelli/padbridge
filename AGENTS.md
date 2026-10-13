@@ -4,6 +4,7 @@
 - Keep the model crate free of I/O and SDL so windows depend on it alone.
 - Build and test with the pinned toolchain: `cargo test --locked --workspace` (tests/layout.rs and tests/service.rs need a writable /dev/uinput).
 - Keep tests to the five kinds in north:harness/skills/testing/SKILL.md.
+- Respect Blizzard's IP (README, "Respecting Blizzard's IP"): if a task seems to need memory reads, disassembly or Blizzard files in the repo, stop and measure from outside instead.
 - Release by pushing an annotated `vX.Y.Z` tag; CI attaches the Linux and Windows builds.
 
 Commands and formats: README.md.
