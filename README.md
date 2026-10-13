@@ -1,41 +1,44 @@
 # padbridge
 
-Game controller support for any Warcraft III map. An always-on Linux service
+Warcraft III is played with a keyboard and mouse, which leaves out players who
+would rather use a controller. padbridge adds controller support to any map
+without modifying the game or the map.
+
+An always-on Linux service
 finds Warcraft III, the controller and the map being played by itself, and turns
 the pad into keys, clicks and pointer motion while the game has focus. Windows
 and macOS get the same controller-as-keys mapper as a foreground helper
 (`padbridge --emit`). SDL3 owns discovery, normalization and adapter
 protocols; enigo delivers key transitions. MIT licence (LICENSE).
 
-## Respecting Blizzard's and Nintendo's IP
+## Principles
 
-This project copies nothing from Blizzard or Nintendo, and it never touches the games.
+padbridge is an independent fan project, not affiliated with or endorsed by
+Blizzard Entertainment or Nintendo. It is written entirely from scratch and
+works alongside a copy of Warcraft III you own; it never replaces or
+redistributes the game.
 
-- It reads the controller and sends ordinary operating-system key, click and
-  pointer events to the focused Warcraft III window, the way a keyboard and
-  mouse do. It does not read or write the game's memory, inject code, patch the
-  game, or touch other players' games or Blizzard's services.
-- No Blizzard code, art, models, textures, sounds, music, data tables, game
-  scripts (`common.j`, `blizzard.j` bodies) or in-game text is committed or
-  distributed. Short identifying quotes and native names are fine.
-- Behaviour comes only from black-box observation of the game as a player sees
-  it (what it displays, the keys it accepts, files it writes) and from public
-  documentation: never from disassembly, decompilation, decrypted or dumped
-  executables, debugger sessions, or memory reads.
-- No DRM bypass, no Battle.net sign-in emulation, no cheating or anti-cheat
-  evasion. "Warcraft" stays out of product names and logos; "works with your
-  Warcraft III install" is fine.
-- No Warsmash (AGPL) code.
-- Melee feel comes from public frame data and from playing the game, never from its
-  decompilation: no decomp-derived function names, addresses, struct offsets or
-  code excerpts, and no values read from Melee's own files, in any version of
-  the repository or its issues. The stick thresholds here are our own design
-  targets.
+- **Respect copyright and publisher IP.** Nothing of Blizzard's or Nintendo's
+  (code, art, sound, data, game scripts or in-game text) is in this repository
+  or ships with padbridge. It reads the controller and sends ordinary
+  operating-system key, click and pointer events to the focused Warcraft III
+  window, the way a keyboard and mouse do.
+- **Learn by observation.** Behaviour is measured from the outside: what the
+  game displays, the keys it accepts, the files it writes, plus public
+  documentation. Never from disassembly, decompilation or the game's memory.
+  Melee stick feel comes from public frame data and from playing the game: no
+  decomp-derived function names, addresses, struct offsets or code excerpts,
+  and no values read from Melee's own files. The stick thresholds here are our
+  own design targets.
+- **Play fair.** No DRM bypass, no Battle.net emulation, no cheats, and nothing
+  that touches other players or Blizzard's services. padbridge does not read or
+  write the game's memory, inject code or patch the game.
+- **Original work.** Our own code only. No code from AGPL projects such as
+  Warsmash, and "Warcraft" stays out of our product names.
 
-Private local test tools, if anyone runs them, live outside every repository
-and never feed this code. `model/tests/clean_room.rs` runs in `cargo test` and
-CI and refuses memory-access APIs, game-format files, addresses into the game
-binary and decompilation symbols. The long form is
+`model/tests/clean_room.rs` runs in `cargo test` and CI and refuses
+memory-access APIs, game-format files, addresses into the game binary and
+decompilation symbols. The long form is
 [wisp's docs/clean-room.md](https://github.com/tompassarelli/wisp/blob/main/docs/clean-room.md).
 
 Two ways for a map to support a controller:
@@ -572,3 +575,6 @@ map's calibration observation, then allow the helper to exit. Repeat with
 its markers when it exits or loses focus. The native runner must observe both
 calibration callbacks before starting cursor playback; the duration alone is
 not a calibration acknowledgment.
+
+<small>Warcraft and Blizzard Entertainment are trademarks or registered trademarks of Blizzard
+Entertainment, Inc. Nintendo and Super Smash Bros. Melee are trademarks of Nintendo.</small>

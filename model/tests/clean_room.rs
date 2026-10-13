@@ -125,5 +125,5 @@ fn tracked_files_respect_blizzards_ip() {
         .collect();
     assert!(tracked.len() > 10, "git ls-files returned {} files", tracked.len());
     let views: Vec<(&str, &[u8])> = tracked.iter().map(|(name, bytes)| (name.as_str(), bytes.as_slice())).collect();
-    assert_eq!(problems(&views), Vec::<String>::new(), "see the README, \"Respecting Blizzard's IP\"");
+    assert_eq!(problems(&views), Vec::<String>::new(), "see the README, \"Principles\"");
 }
