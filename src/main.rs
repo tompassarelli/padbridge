@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-use wc3_controller::focus::{self, Foreground};
+use padbridge::focus::{self, Foreground};
 use sdl3::{
     JoystickSubsystem,
     event::Event,
@@ -18,7 +18,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use wc3_controller::{
+use padbridge::{
     EventMapper, Sample,
     output::{KeyboardOutput, Output},
     selected_input,
@@ -26,11 +26,11 @@ use wc3_controller::{
 
 #[derive(Default)]
 struct Options {
-    preset: wc3_controller::model::PadPreset,
+    preset: padbridge::model::PadPreset,
     tap_jump: bool,
-    triggers: wc3_controller::model::TriggerShields,
-    right_stick: wc3_controller::model::RightStick,
-    remaps: wc3_controller::model::Remaps,
+    triggers: padbridge::model::TriggerShields,
+    right_stick: padbridge::model::RightStick,
+    remaps: padbridge::model::Remaps,
     seconds: Option<u64>,
     gamepad: Option<u32>,
     emit: bool,
@@ -47,7 +47,7 @@ struct Options {
 }
 
 #[cfg(target_os = "linux")]
-const HELP: &str = "wc3-controller [--list] [--watch-seconds N] [--gamepad ID] [--preset melee|z-jump|tom] [--tap-jump on|off] [--left-trigger full|light] [--right-trigger full|light] [--right-stick smash|tilt] [--remaps CONTROL=MOVE,...]\n\
+const HELP: &str = "padbridge [--list] [--watch-seconds N] [--gamepad ID] [--preset melee|z-jump|tom] [--tap-jump on|off] [--left-trigger full|light] [--right-trigger full|light] [--right-stick smash|tilt] [--remaps CONTROL=MOVE,...]\n\
                     Observation only by default. Live output additionally requires:\n\
                     --emit --display DISPLAY --x11-window DECIMAL_ID --pid PID --niri-window ID\n\
                     Or --private-wlr-app-id ID in the isolated labwc test desktop instead of --niri-window.\n\
@@ -58,7 +58,7 @@ const HELP: &str = "wc3-controller [--list] [--watch-seconds N] [--gamepad ID] [
                     --check-focus checks selected target without opening keyboard output. Windows/macOS refuse live output.";
 
 #[cfg(not(target_os = "linux"))]
-const HELP: &str = "wc3-controller [--list] [--watch-seconds N] [--gamepad ID] [--preset melee|z-jump|tom] [--tap-jump on|off] [--left-trigger full|light] [--right-trigger full|light] [--right-stick smash|tilt] [--remaps CONTROL=MOVE,...]\n\
+const HELP: &str = "padbridge [--list] [--watch-seconds N] [--gamepad ID] [--preset melee|z-jump|tom] [--tap-jump on|off] [--left-trigger full|light] [--right-trigger full|light] [--right-stick smash|tilt] [--remaps CONTROL=MOVE,...]\n\
                     Observation only by default. --emit sends keys only while Warcraft III is the\n\
                     foreground application; add --pid PID to require one game process.\n\
                     --check-focus checks the foreground game without opening keyboard output.\n\
@@ -125,7 +125,7 @@ struct VirtualPad {
 impl VirtualPad {
     fn attach(joysticks: &JoystickSubsystem) -> Result<Self, String> {
         let desc = VirtualJoystickDescription::new()
-            .name("wc3-controller virtual pad")
+            .name("padbridge virtual pad")
             .joystick_type(JoystickType::Gamepad)
             .with_buttons(VIRTUAL_BUTTONS)
             .with_axes(VIRTUAL_AXES);
@@ -211,12 +211,12 @@ fn options() -> Result<Options, String> {
                 std::process::exit(0);
             }
             "--list" => {}
-            "--preset" => o.preset = wc3_controller::model::PadPreset::parse(&args.next().ok_or("missing pad preset")?)?,
+            "--preset" => o.preset = padbridge::model::PadPreset::parse(&args.next().ok_or("missing pad preset")?)?,
             "--tap-jump" => o.tap_jump = match args.next().as_deref() { Some("on") => true, Some("off") => false, _ => return Err("--tap-jump needs on or off".into()) },
-            "--left-trigger" => o.triggers.left = wc3_controller::model::TriggerShield::parse(&args.next().ok_or("--left-trigger needs full or light")?)?,
-            "--right-stick" => o.right_stick = wc3_controller::model::RightStick::parse(&args.next().ok_or("--right-stick needs smash or tilt")?)?,
-            "--remaps" => o.remaps = wc3_controller::model::parse_remaps(&args.next().ok_or("--remaps needs CONTROL=MOVE,...")?)?,
-            "--right-trigger" => o.triggers.right = wc3_controller::model::TriggerShield::parse(&args.next().ok_or("--right-trigger needs full or light")?)?,
+            "--left-trigger" => o.triggers.left = padbridge::model::TriggerShield::parse(&args.next().ok_or("--left-trigger needs full or light")?)?,
+            "--right-stick" => o.right_stick = padbridge::model::RightStick::parse(&args.next().ok_or("--right-stick needs smash or tilt")?)?,
+            "--remaps" => o.remaps = padbridge::model::parse_remaps(&args.next().ok_or("--remaps needs CONTROL=MOVE,...")?)?,
+            "--right-trigger" => o.triggers.right = padbridge::model::TriggerShield::parse(&args.next().ok_or("--right-trigger needs full or light")?)?,
             "--emit" => o.emit = true,
             "--check-focus" => o.check_focus = true,
             "--virtual-pad" => o.virtual_pad = true,
@@ -288,8 +288,8 @@ fn options() -> Result<Options, String> {
 
 #[cfg(target_os = "linux")]
 struct AnalogSession {
-    ingress: wc3_controller::pad_ingress::Ingress,
-    out: wc3_controller::service::any_map::DesktopOutput,
+    ingress: padbridge::pad_ingress::Ingress,
+    out: padbridge::service::any_map::DesktopOutput,
 }
 
 #[cfg(target_os = "linux")]
@@ -323,8 +323,8 @@ fn sample(pad: &Gamepad) -> Sample {
     }
 }
 
-fn event_control(input: wc3_controller::CapturedInput) -> (&'static str, String) {
-    use wc3_controller::{Control, InputValue};
+fn event_control(input: padbridge::CapturedInput) -> (&'static str, String) {
+    use padbridge::{Control, InputValue};
     match (input.control, input.value) {
         (Control::Axis(axis), InputValue::Axis(value)) => ("axis", format!("{axis:?}={value}")),
         (Control::Button(button), InputValue::Button(value)) => {
@@ -370,7 +370,7 @@ fn history_transition(
     submit_ns: Option<u128>,
     control: &str,
     value: &str,
-    action: wc3_controller::Action,
+    action: padbridge::Action,
     pressed: bool,
     disposition: &str,
 ) {
@@ -403,12 +403,12 @@ fn run() -> Result<(), String> {
         return Ok(());
     }
     #[cfg(target_os = "linux")]
-    let route = wc3_controller::pad_ingress::Route::parse(o.pad_ingress.as_deref().unwrap_or("digital"), o.cursor_grid.as_deref())?;
+    let route = padbridge::pad_ingress::Route::parse(o.pad_ingress.as_deref().unwrap_or("digital"), o.cursor_grid.as_deref())?;
     #[cfg(target_os = "linux")]
     if let Some(end) = o.cursor_calibrate {
-        use wc3_controller::pad_ingress::{CursorGrid, calibrate};
+        use padbridge::pad_ingress::{CursorGrid, calibrate};
         let grid = CursorGrid::parse(o.cursor_grid.as_deref().ok_or("calibration requires --cursor-grid")?)?;
-        let mut out = wc3_controller::service::any_map::DesktopOutput::new(o.display.as_deref().ok_or("missing display")?)?;
+        let mut out = padbridge::service::any_map::DesktopOutput::new(o.display.as_deref().ok_or("missing display")?)?;
         let start = Instant::now();
         let mut held = false;
         let calibrating = Arc::new(AtomicBool::new(true));
@@ -429,10 +429,10 @@ fn run() -> Result<(), String> {
         return result.and(cleanup);
     }
     #[cfg(target_os = "linux")]
-    let mut analog = if o.emit && route != wc3_controller::pad_ingress::Route::Digital {
+    let mut analog = if o.emit && route != padbridge::pad_ingress::Route::Digital {
         Some(AnalogSession {
-            ingress: wc3_controller::pad_ingress::Ingress::new(route),
-            out: wc3_controller::service::any_map::DesktopOutput::new(o.display.as_deref().ok_or("missing display")?)?,
+            ingress: padbridge::pad_ingress::Ingress::new(route),
+            out: padbridge::service::any_map::DesktopOutput::new(o.display.as_deref().ok_or("missing display")?)?,
         })
     } else { None };
     if !sdl3::hint::set("SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS", "1") {
@@ -465,7 +465,7 @@ fn run() -> Result<(), String> {
         listing!(
             "gamepad id={id} name={:?} kind={:?} path={:?} vendor={:?} product={:?}\nmapping={:?}\nnormalized={:?}",
             pad.name(),
-            wc3_controller::pad_kind(*id),
+            padbridge::pad_kind(*id),
             pad.path(),
             pad.vendor_id(),
             pad.product_id(),
@@ -473,7 +473,7 @@ fn run() -> Result<(), String> {
             sample(&pad)
         );
     }
-    listing!("presets={}", wc3_controller::model::PadPreset::ALL.map(|preset| preset.name()).join(","));
+    listing!("presets={}", padbridge::model::PadPreset::ALL.map(|preset| preset.name()).join(","));
     let Some(seconds) = o.seconds else {
         return Ok(());
     };
@@ -510,7 +510,7 @@ fn run() -> Result<(), String> {
     mapper.set_right_stick(o.right_stick);
     mapper.set_trigger_shields(o.triggers);
     mapper.set_remaps(o.remaps.clone());
-    mapper.set_pad_kind(wc3_controller::pad_kind(id));
+    mapper.set_pad_kind(padbridge::pad_kind(id));
     let mut next_id = 0;
     let startup_events = events.poll_iter().count();
     let initial = sample(&pad);
@@ -734,10 +734,10 @@ fn run() -> Result<(), String> {
     Ok(())
 }
 
-/// `wc3-controller --service`: the always-on controller service (README, "Always-on controller service").
+/// `padbridge --service`: the always-on controller service (README, "Always-on controller service").
 #[cfg(target_os = "linux")]
 fn service() -> Result<(), String> {
-    use wc3_controller::service::{self, Config, NoMap, Profile, plugin::Plugin};
+    use padbridge::service::{self, Config, NoMap, Profile, plugin::Plugin};
     let mut config = Config::default();
     let mut plugin = None;
     let mut args = std::env::args().skip(2);
@@ -748,8 +748,8 @@ fn service() -> Result<(), String> {
             "--layout" => {
                 let path = value()?;
                 let text = std::fs::read_to_string(&path).map_err(|error| format!("read the layout {path}: {error}"))?;
-                let layout: Vec<wc3_controller::model::Binding> = serde_json::from_str(&text).map_err(|error| format!("the layout {path}: {error}"))?;
-                if let Some(binding) = layout.iter().find(|binding| matches!(&binding.press, wc3_controller::model::Press::Key(key) if service::any_map::key_of(key).is_none())) {
+                let layout: Vec<padbridge::model::Binding> = serde_json::from_str(&text).map_err(|error| format!("the layout {path}: {error}"))?;
+                if let Some(binding) = layout.iter().find(|binding| matches!(&binding.press, padbridge::model::Press::Key(key) if service::any_map::key_of(key).is_none())) {
                     return Err(format!("the layout {path}: {:?} names no key this service can press", binding.press));
                 }
                 config.layout = Some(layout);
@@ -780,7 +780,7 @@ fn service() -> Result<(), String> {
 }
 
 #[cfg(target_os = "linux")]
-const SERVICE_HELP: &str = "wc3-controller --service [--plugin PROGRAM] [--layout FILE] [--display :0] [--pads DIR] [--status FILE] [--settings FILE] [--headless DOCUMENTS] [--interface ADDRESS|off] [--poll-ms N]";
+const SERVICE_HELP: &str = "padbridge --service [--plugin PROGRAM] [--layout FILE] [--display :0] [--pads DIR] [--status FILE] [--settings FILE] [--headless DOCUMENTS] [--interface ADDRESS|off] [--poll-ms N]";
 
 fn main() {
     if std::env::args().nth(1).as_deref() == Some("--service") {
@@ -789,13 +789,13 @@ fn main() {
         #[cfg(not(target_os = "linux"))]
         let result: Result<(), String> = Err("the service runs on Linux; elsewhere use --emit".into());
         if let Err(error) = result {
-            eprintln!("wc3-controller --service: {error}");
+            eprintln!("padbridge --service: {error}");
             std::process::exit(1);
         }
         return;
     }
     if let Err(error) = run() {
-        eprintln!("wc3-controller: {error}");
+        eprintln!("padbridge: {error}");
         std::process::exit(1);
     }
 }

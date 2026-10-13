@@ -10,7 +10,7 @@ pub mod service;
 #[cfg(target_os = "linux")]
 pub mod wlr;
 
-pub use wc3_controller_model as model;
+pub use padbridge_model as model;
 
 use sdl3::{
     event::Event,

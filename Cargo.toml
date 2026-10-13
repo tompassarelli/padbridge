@@ -1,12 +1,12 @@
 [package]
-name = "wc3-controller"
+name = "padbridge"
 version = "0.3.6"
 edition = "2024"
 rust-version = "1.96.1"
 publish = false
 license = "MIT"
 description = "Game controller support for any Warcraft III map: an always-on service that turns a pad into keys, clicks and pointer motion"
-repository = "https://github.com/tompassarelli/wc3-controller"
+repository = "https://github.com/tompassarelli/padbridge"
 
 [workspace]
 members = ["model"]
@@ -19,7 +19,7 @@ e2e = []
 sdl3 = { version = "=0.20.0", features = ["build-from-source-static", "build-from-source-unix-console"] }
 enigo = { git = "https://github.com/tompassarelli/enigo", rev = "0b7bae348b0ba7108b81bc4c7267e5bb2d6a509b" }
 ctrlc = { version = "3.5", features = ["termination"] }
-wc3-controller-model = { path = "model" }
+padbridge-model = { path = "model" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 evdev = "=0.13.2"
@@ -48,6 +48,6 @@ windows = { version = "0.61", features = ["Win32_UI_Input_KeyboardAndMouse"] }
 vigem-client = { version = "=0.1.4", features = ["unstable_ds4"] }
 
 [[bin]]
-name = "wc3-standin"
+name = "padbridge-standin"
 path = "src/bin/standin.rs"
 required-features = ["e2e"]

@@ -1,10 +1,10 @@
-# wc3-controller
+# padbridge
 
 Game controller support for any Warcraft III map. An always-on Linux service
 finds Warcraft III, the controller and the map being played by itself, and turns
 the pad into keys, clicks and pointer motion while the game has focus. Windows
 and macOS get the same controller-as-keys mapper as a foreground helper
-(`wc3-controller --emit`). SDL3 owns discovery, normalization and adapter
+(`padbridge --emit`). SDL3 owns discovery, normalization and adapter
 protocols; enigo delivers key transitions. MIT licence (LICENSE).
 
 ## Respecting Blizzard's and Nintendo's IP
@@ -46,7 +46,7 @@ Two ways for a map to support a controller:
   driven by a pointer, or a helper process that types into the game.
 
 Release binaries for Linux and Windows are attached to every
-[release](https://github.com/tompassarelli/wc3-controller/releases); CI
+[release](https://github.com/tompassarelli/padbridge/releases); CI
 (`.github/workflows/ci.yml`) builds them from each `v*` tag.
 
 ## Add controller support to your map
@@ -82,7 +82,7 @@ Release binaries for Linux and Windows are attached to every
 2. Run the service with it:
 
    ```sh
-   wc3-controller --service --layout examples/echo-isles/layout.json
+   padbridge --service --layout examples/echo-isles/layout.json
    ```
 
    Open your map in Warcraft III on display `:0`: while its window has focus the
@@ -107,9 +107,9 @@ interface with `{"bindings":[...]}` in the same format.
 
 A map plug-in tells the service when the map runs a session, what it shows
 players, and which helper process serves it. Implement
-`wc3_controller::service::Profile` in Rust and either run
-`wc3_controller::service::run` with it in your own program, or serve it as a
-separate program with `wc3_controller::service::plugin::serve` and start the
+`padbridge::service::Profile` in Rust and either run
+`padbridge::service::run` with it in your own program, or serve it as a
+separate program with `padbridge::service::plugin::serve` and start the
 service with `--plugin PROGRAM`. A plug-in that is missing leaves the service on
 Any map.
 
@@ -200,12 +200,12 @@ intended simulation frame.
 
 ## Fighter layout
 
-A platform fighter's moves on fixed keys: the layout `wc3-controller --emit`
+A platform fighter's moves on fixed keys: the layout `padbridge --emit`
 presses, and the one the service presses for a plug-in session on keys
 (`model::fighter_bindings`).
 
 Three presets choose the buttons; sticks and Start are the same in all of them.
-`wc3-controller` and plug-in helpers accept `--preset melee|z-jump|tom`, and
+`padbridge` and plug-in helpers accept `--preset melee|z-jump|tom`, and
 `--list` prints them.
 
 | Control | melee (default) | z-jump | tom |
@@ -241,12 +241,12 @@ aerials in the air, in any preset.
 Remaps change single buttons on top of a preset, e.g. grab on LB instead of RB.
 A window sends `{"remaps":{"lb":"grab","rb":"none"}}`, which replaces the
 previous remaps; the service saves them with the other settings in
-`~/.config/wc3-controller/settings.json` as `"remaps"`. Controls are `a`, `b`,
+`~/.config/padbridge/settings.json` as `"remaps"`. Controls are `a`, `b`,
 `x`, `y`, `lb`, `rb`, `lt`, `rt` and `left_stick`, named by position as in
 layout files (on a GameCube pad after its letter swap: `x` is the printed B);
 moves are `attack`, `special`, `jump`, `grab`, `shield`, `tilt`, `short_hop`,
 `meter` and `none` (unbound). A trigger remapped to shield keeps its full or light
-choice; shield on a button is full shield. `wc3-controller --remaps
+choice; shield on a button is full shield. `padbridge --remaps
 lb=grab,rb=none` takes the same remaps, and `model::ControllerSettings::bindings`
 gives the remapped layout a window shows.
 
@@ -262,7 +262,7 @@ specials, X and Y jump, Z grabs and L and R shield. `--list` prints each pad's
 `kind`. On Windows the Wii U adapter needs the WinUSB driver installed with
 [Zadig](https://zadig.akeo.ie/), as
 [Dolphin documents](https://dolphin-emu.org/docs/guides/how-use-official-gc-controller-adapter-wii-u/).
-GameCube identity applies to the SDL helper (`wc3-controller --watch-seconds`);
+GameCube identity applies to the SDL helper (`padbridge --watch-seconds`);
 the service reads Linux evdev pads and does not apply it.
 
 Either trigger can instead light shield: choose Full shield or Light shield for
@@ -421,7 +421,7 @@ controller as ordinary keyboard keys.
 `cargo test --locked --features e2e --test e2e -- --nocapture` runs the real
 helper in a Windows or macOS desktop session against a scripted pad (on Windows
 a ViGEmBus virtual DualShock 4, so ViGEmBus must be installed; on macOS the
-helper's `--virtual-pad`) and two `wc3-standin` windows, one copied to the
+helper's `--virtual-pad`) and two `padbridge-standin` windows, one copied to the
 Warcraft III executable name. It checks every mapped action, that the game
 window's whole key sequence is exactly the expected one, both
 ordered jump-button overlaps and the trigger overlap, that no key reaches either
@@ -462,19 +462,19 @@ distribution must retain dependency notices and satisfy transitive licenses.
 
 ## Always-on controller service (Linux)
 
-`wc3-controller --service [--plugin PROGRAM] [--layout FILE]` finds Warcraft III
+`padbridge --service [--plugin PROGRAM] [--layout FILE]` finds Warcraft III
 on display `:0` (a `Warcraft III.exe` process whose `DISPLAY` is `:0`; its Wine
 prefix gives Documents/Warcraft III), the game's X11 window (`_NET_WM_PID`) and
 its niri window (unique title and class), and the controller by its stable
 `/dev/input/by-id/*-event-joystick` link, an Xbox pad first. A lock in
 `$XDG_RUNTIME_DIR` keeps one service per display; its helpers end with it.
-`~/.local/state/wc3-controller/service.txt` holds its current state
+`~/.local/state/padbridge/service.txt` holds its current state
 (`state=serving`, `game_pid`, `session`, `helper_pid`, ...). Discovery and the
 helper's lifecycle are map-agnostic (src/service.rs); map-specific knowledge is
 a plug-in (src/service/plugin.rs, "Map plug-ins" above).
 
 Windows talk to it on TCP 127.0.0.1:47631 (src/service/interface.rs), one JSON
-object per line in the types of `model` (crate `wc3-controller-model`): the
+object per line in the types of `model` (crate `padbridge-model`): the
 current `{"status":...}` on connect and on every change, `{"input":...}` for
 every change of the pad's state (read without grabbing it), and from the window
 `{"profile":"auto"|"map"|"any_map"|"off"}`, `{"bindings":[...]}`,
@@ -491,12 +491,12 @@ A login unit runs it, for example with systemd:
 
 ```ini
 [Service]
-ExecStart=%h/.local/share/wc3-controller/bin/wc3-controller --service --plugin %h/path/to/your-plugin
+ExecStart=%h/.local/share/padbridge/bin/padbridge --service --plugin %h/path/to/your-plugin
 Restart=always
 ```
 
 Install it from a tag with
-`cargo install --locked --git https://github.com/tompassarelli/wc3-controller --tag vX.Y.Z --root ~/.local/share/wc3-controller wc3-controller`.
+`cargo install --locked --git https://github.com/tompassarelli/padbridge --tag vX.Y.Z --root ~/.local/share/padbridge padbridge`.
 
 ### Any map profile
 
@@ -512,14 +512,14 @@ until the pad is neutral.
 ### Settings
 
 The service saves the fighter layout's preset, tap jump, trigger choices, right stick mode and remaps in
-`$XDG_CONFIG_HOME/wc3-controller/settings.json`, or
-`~/.config/wc3-controller/settings.json`, and restores them at startup; a
+`$XDG_CONFIG_HOME/padbridge/settings.json`, or
+`~/.config/padbridge/settings.json`, and restores them at startup; a
 connected window follows these choices instead of replacing them with its own
 defaults. `--settings FILE` uses another file for an isolated service.
 
 ## Status model
 
-`model/` (crate `wc3-controller-model`, re-exported as `wc3_controller::model`)
+`model/` (crate `padbridge-model`, re-exported as `padbridge::model`)
 holds what the controller service knows (pad, game, map session, active
 profile, the plug-in's map title, whether presses reach the game), the
 newline-delimited JSON messages on its local interface, the plain-language rows
@@ -528,7 +528,7 @@ profile's mapper (keys, clicks and pointer from configurable bindings). It has
 no I/O and builds without SDL, so windows depend on it alone:
 
 ```toml
-wc3-controller-model = { git = "https://github.com/tompassarelli/wc3-controller", tag = "vX.Y.Z" }
+padbridge-model = { git = "https://github.com/tompassarelli/padbridge", tag = "vX.Y.Z" }
 ```
 
 ## Analog comparison candidates
@@ -541,7 +541,7 @@ compositor output extent in logical pixels. Use the same output containing the
 game window and choose a rectangle inside its flat-ground diagnostic view.
 Restart the service after changing these variables.
 
-For a bounded native test, `wc3-controller --emit --watch-seconds N` accepts
+For a bounded native test, `padbridge --emit --watch-seconds N` accepts
 `--pad-ingress keys|cursor` and `--cursor-grid X,Y,W,H,SCREEN_W,SCREEN_H`, with the
 usual exact game-window and foreground arguments. Add `--virtual-pad` to feed
 SDL acquisition from stdin, for example `axis leftx 16384`, `axis leftx 32767`,
@@ -564,7 +564,7 @@ output logs each submitted `pad_ingress payload=... x=... z=... left=... right=.
 record to stderr alongside the ordinary timestamped action history on stdout.
 
 Cursor calibration is a separate bounded operation, requiring no controller:
-run `wc3-controller --emit --watch-seconds N --cursor-calibrate start` with
+run `padbridge --emit --watch-seconds N --cursor-calibrate start` with
 `--cursor-grid` and the usual foreground arguments after the diagnostic map's
 camera is fixed. It holds Home, End and PageUp and moves to cell (0,0). Wait for the
 map's calibration observation, then allow the helper to exit. Repeat with

@@ -15,11 +15,11 @@ use std::{
 fn main() {
     let mut args = std::env::args().skip(1);
     let (Some(title), Some(log)) = (args.next(), args.next()) else {
-        eprintln!("usage: wc3-standin TITLE LOG");
+        eprintln!("usage: padbridge-standin TITLE LOG");
         std::process::exit(2);
     };
     if let Err(error) = run(&title, &log) {
-        eprintln!("wc3-standin: {error}");
+        eprintln!("padbridge-standin: {error}");
         std::process::exit(1);
     }
 }

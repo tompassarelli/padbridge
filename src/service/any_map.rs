@@ -307,7 +307,7 @@ pub enum Mode {
     /// The map plug-in's menus: pointer and clicks only.
     Menu { start_on_keys: bool },
     /// A map session on keys: the controller-as-keys mapper of
-    /// `wc3-controller --emit` ([`crate::Mapper`]), the fighter layout
+    /// `padbridge --emit` ([`crate::Mapper`]), the fighter layout
     /// (README, "Fighter layout").
     Keys(model::ControllerSettings),
 }

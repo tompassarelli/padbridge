@@ -1,6 +1,6 @@
 //! The README's sample: a key layout file for an ordinary map (Blizzard's
 //! melee map Echo Isles, examples/echo-isles/layout.json) served by the real
-//! `wc3-controller --service` with no map plug-in, a virtual pad and a
+//! `padbridge --service` with no map plug-in, a virtual pad and a
 //! stand-in game that records its presses. Needs a writable /dev/uinput; without
 //! one it fails rather than passing unrun.
 #![cfg(target_os = "linux")]
@@ -31,7 +31,7 @@ fn virtual_pad() -> Option<(VirtualDevice, PathBuf)> {
     for key in [KeyCode::BTN_SOUTH, KeyCode::BTN_EAST, KeyCode::BTN_NORTH, KeyCode::BTN_WEST, KeyCode::BTN_TL, KeyCode::BTN_TR, KeyCode::BTN_START, KeyCode::BTN_SELECT] {
         keys.insert(key);
     }
-    let mut builder = VirtualDevice::builder().unwrap().name("wc3 layout test pad").with_keys(&keys).unwrap();
+    let mut builder = VirtualDevice::builder().unwrap().name("padbridge layout test pad").with_keys(&keys).unwrap();
     for axis in [Abs::ABS_X, Abs::ABS_Y, Abs::ABS_RX, Abs::ABS_RY] {
         builder = builder.with_absolute_axis(&UinputAbsSetup::new(axis, AbsInfo::new(0, -32768, 32767, 16, 128, 0))).unwrap();
     }
@@ -62,14 +62,14 @@ fn presses(file: &Path) -> Vec<String> {
 fn a_layout_file_plays_an_ordinary_map_without_a_plugin() {
     let (mut pad, node) = virtual_pad().expect("could not run: /dev/uinput is not writable, so there is no virtual pad");
     until("access to the virtual pad", || fs::File::open(&node).ok());
-    let root = std::env::temp_dir().join(format!("wc3-layout-{}", std::process::id()));
+    let root = std::env::temp_dir().join(format!("padbridge-layout-{}", std::process::id()));
     let (pads, documents) = (root.join("pads"), root.join("Warcraft III"));
     fs::create_dir_all(&pads).unwrap();
     fs::create_dir_all(&documents).unwrap();
     std::os::unix::fs::symlink(&node, pads.join("usb-Microsoft_Controller_TEST-event-joystick")).unwrap();
     fs::write(documents.join("game"), "1").unwrap();
     let layout = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/echo-isles/layout.json");
-    let service = Service(Command::new(env!("CARGO_BIN_EXE_wc3-controller"))
+    let service = Service(Command::new(env!("CARGO_BIN_EXE_padbridge"))
         .args(["--service", "--layout", layout.to_str().unwrap(), "--pads", pads.to_str().unwrap(),
             "--headless", documents.to_str().unwrap(), "--status", root.join("status.txt").to_str().unwrap(),
             "--settings", root.join("settings.json").to_str().unwrap(), "--interface", "off", "--poll-ms", "20"])

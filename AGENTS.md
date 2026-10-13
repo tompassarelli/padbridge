@@ -1,4 +1,4 @@
-# wc3-controller
+# padbridge
 
 - Keep it map-agnostic: nothing names a particular map; map behaviour belongs in a plug-in (README, "Map plug-ins") kept with its map.
 - Keep the model crate free of I/O and SDL so windows depend on it alone.

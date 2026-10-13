@@ -1,5 +1,5 @@
 //! Windows/macOS end-to-end check of the real helper (`--features e2e`, needs a
-//! desktop session). A scripted pad drives wc3-controller, which must type the
+//! desktop session). A scripted pad drives padbridge, which must type the
 //! fighter layout only into a focused stand-in whose executable is named like
 //! Warcraft III. Stand-ins record what their windows receive; the operating
 //! system's key state shows whether the helper released what it pressed, since
@@ -22,8 +22,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-const HELPER: &str = env!("CARGO_BIN_EXE_wc3-controller");
-const STANDIN: &str = env!("CARGO_BIN_EXE_wc3-standin");
+const HELPER: &str = env!("CARGO_BIN_EXE_padbridge");
+const STANDIN: &str = env!("CARGO_BIN_EXE_padbridge-standin");
 const WAIT: Duration = Duration::from_secs(10);
 const QUIET: Duration = Duration::from_millis(400);
 const SETTLE: Duration = Duration::from_millis(150);
@@ -234,7 +234,7 @@ mod pad {
     use super::Process;
 
     pub const HELPER_ARGS: &[&str] = &["--virtual-pad"];
-    pub const NAME: &str = "wc3-controller virtual pad";
+    pub const NAME: &str = "padbridge virtual pad";
 
     /// The helper's stdin drives its in-process SDL virtual gamepad.
     pub struct Pad;
@@ -498,7 +498,7 @@ impl Harness {
 
 #[test]
 fn helper_types_the_layout_only_into_the_focused_game() {
-    let dir = std::env::temp_dir().join(format!("wc3-e2e-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("padbridge-e2e-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let game = Standin::launch(&dir, "Warcraft III");
     let other = Standin::launch(&dir, "Other");

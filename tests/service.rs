@@ -1,4 +1,4 @@
-//! The fighter layout's settings through the real `wc3-controller --service`:
+//! The fighter layout's settings through the real `padbridge --service`:
 //! a window's choices take effect live and survive a restart.
 #![cfg(target_os = "linux")]
 
@@ -32,8 +32,8 @@ fn until<T>(what: &str, mut check: impl FnMut() -> Option<T>) -> T {
 #[test]
 fn layout_tap_jump_and_trigger_choices_take_effect_live_and_survive_service_restart() {
     use std::{io::{BufRead, BufReader, Write}, net::{TcpListener, TcpStream}};
-    use wc3_controller::model::{ClientMessage, ControllerSettings, PadPreset, ServiceMessage, TriggerShield, TriggerShields};
-    let root = std::env::temp_dir().join(format!("wc3-controller-settings-{}", std::process::id()));
+    use padbridge::model::{ClientMessage, ControllerSettings, PadPreset, ServiceMessage, TriggerShield, TriggerShields};
+    let root = std::env::temp_dir().join(format!("padbridge-settings-{}", std::process::id()));
     let documents = root.join("game");
     let pads = root.join("pads");
     fs::create_dir_all(&documents).unwrap();
@@ -42,7 +42,7 @@ fn layout_tap_jump_and_trigger_choices_take_effect_live_and_survive_service_rest
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
     drop(listener);
-    let start = || Service(Command::new(env!("CARGO_BIN_EXE_wc3-controller"))
+    let start = || Service(Command::new(env!("CARGO_BIN_EXE_padbridge"))
         .args(["--service", "--pads", pads.to_str().unwrap(), "--headless", documents.to_str().unwrap(),
             "--settings", path.to_str().unwrap(), "--status", root.join("status.txt").to_str().unwrap(),
             "--interface", &address.to_string(), "--poll-ms", "10"])
@@ -64,8 +64,8 @@ fn layout_tap_jump_and_trigger_choices_take_effect_live_and_survive_service_rest
     let selected = ControllerSettings {
         pad_preset: PadPreset::ZJump, tap_jump: true,
         triggers: TriggerShields { left: TriggerShield::Light, right: TriggerShield::Full },
-        right_stick: wc3_controller::model::RightStick::Tilt,
-        remaps: wc3_controller::model::parse_remaps("lb=grab,rb=none").unwrap(),
+        right_stick: padbridge::model::RightStick::Tilt,
+        remaps: padbridge::model::parse_remaps("lb=grab,rb=none").unwrap(),
     };
     for message in [ClientMessage::PadPreset(selected.pad_preset), ClientMessage::TapJump(selected.tap_jump), ClientMessage::TriggerShields(selected.triggers), ClientMessage::RightStick(selected.right_stick), ClientMessage::Remaps(selected.remaps.clone())] {
         stream.write_all(message.line().as_bytes()).unwrap();

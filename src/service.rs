@@ -526,7 +526,7 @@ impl Default for Config {
             settings_file: settings::default_path(),
             display: ":0".into(),
             pads: "/dev/input/by-id".into(),
-            status_file: Some(home.join(".local/state/wc3-controller/service.txt")),
+            status_file: Some(home.join(".local/state/padbridge/service.txt")),
             poll: Duration::from_millis(250),
             headless: None,
             interface: Some(interface::ADDRESS.into()),
@@ -569,10 +569,10 @@ fn output_target(game: Option<&Game>, pad: Option<&Pad>, kind: Option<any_map::K
 /// second copy never runs a second helper typing into the same game.
 pub fn lock_path(config: &Config) -> PathBuf {
     match &config.headless {
-        Some(documents) => documents.join("wc3-controller.lock"),
+        Some(documents) => documents.join("padbridge.lock"),
         None => {
             let runtime = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
-            runtime.join(format!("wc3-controller-{}.lock", config.display.replace(['/', ':'], "")))
+            runtime.join(format!("padbridge-{}.lock", config.display.replace(['/', ':'], "")))
         }
     }
 }
