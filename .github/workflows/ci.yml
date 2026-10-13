@@ -25,11 +25,11 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            asset: wc3-controller-linux-x86_64
-            exe: wc3-controller
+            asset: padbridge-linux-x86_64
+            exe: padbridge
           - os: windows-latest
-            asset: wc3-controller-windows-x86_64
-            exe: wc3-controller.exe
+            asset: padbridge-windows-x86_64
+            exe: padbridge.exe
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
     defaults:
@@ -65,7 +65,7 @@ jobs:
           cargo test --locked --workspace
           cargo test --locked --features e2e --test e2e -- --nocapture
       - name: Release build
-        run: cargo build --locked --release --bin wc3-controller
+        run: cargo build --locked --release --bin padbridge
       - name: Package
         run: |
           mkdir -p dist/${{ matrix.asset }}
