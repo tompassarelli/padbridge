@@ -27,6 +27,14 @@ fn proc_mem(text: &str) -> bool {
     })
 }
 
+fn decomp_symbol(text: &str) -> bool {
+    text.match_indices("_80").any(|(at, _)| {
+        let letters = text[..at].chars().rev().take_while(char::is_ascii_alphabetic).count();
+        let digits = text[at + 3..].chars().take_while(|c| c.is_ascii_digit() || ('A'..='F').contains(c)).count();
+        letters >= 2 && digits >= 6
+    })
+}
+
 fn address_table(text: &str) -> bool {
     text.lines().any(|line| {
         GAME_BINARIES.iter().any(|name| line.contains(name))
@@ -55,6 +63,9 @@ fn problems(files: &[(&str, &[u8])]) -> Vec<String> {
         if proc_mem(text) {
             found.push(format!("{path}: reads or writes another process's /proc/<pid>/mem"));
         }
+        if decomp_symbol(text) || text.contains("melee:src/") {
+            found.push(format!("{path}: a decompilation symbol or source path"));
+        }
         if address_table(text) {
             found.push(format!("{path}: an address or offset into the game binary"));
         }
@@ -78,6 +89,8 @@ fn tracked_files_respect_blizzards_ip() {
         ("a.c", b"CreateRemoteThread(h, 0, 0, f, 0, 0, 0)", "CreateRemoteThread"),
         ("notes.txt", b"Warcraft III.exe base + 0x00A1B2C3 is the unit table", "address table"),
         ("a.ts", b"import { patch } from \"~/.local/share/wisp-private/lan/memory\"", "wisp-private"),
+        ("a.rs", b"// threshold read in zz_80ABCDEF", "decomp symbol"),
+        ("a.md", b"see melee:src/example.c", "decomp source path"),
         ("Footman.mdx", b"anything", "extension"),
         ("ui.fdf", b"Frame", "extension"),
         ("blob.bin", b"BLP1\0\0\0\0", "magic"),

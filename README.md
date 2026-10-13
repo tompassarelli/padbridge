@@ -7,9 +7,9 @@ and macOS get the same controller-as-keys mapper as a foreground helper
 (`wc3-controller --emit`). SDL3 owns discovery, normalization and adapter
 protocols; enigo delivers key transitions. MIT licence (LICENSE).
 
-## Respecting Blizzard's IP
+## Respecting Blizzard's and Nintendo's IP
 
-This project copies nothing from Blizzard, and it never touches the game.
+This project copies nothing from Blizzard or Nintendo, and it never touches the games.
 
 - It reads the controller and sends ordinary operating-system key, click and
   pointer events to the focused Warcraft III window, the way a keyboard and
@@ -26,11 +26,16 @@ This project copies nothing from Blizzard, and it never touches the game.
   evasion. "Warcraft" stays out of product names and logos; "works with your
   Warcraft III install" is fine.
 - No Warsmash (AGPL) code.
+- Melee feel comes from public frame data and from playing the game, never from its
+  decompilation: no decomp-derived function names, addresses, struct offsets or
+  code excerpts, and no values read from Melee's own files, in any version of
+  the repository or its issues. The stick thresholds here are our own design
+  targets.
 
 Private local test tools, if anyone runs them, live outside every repository
 and never feed this code. `model/tests/clean_room.rs` runs in `cargo test` and
-CI and refuses memory-access APIs, game-format files and addresses into the game
-binary. The long form is
+CI and refuses memory-access APIs, game-format files, addresses into the game
+binary and decompilation symbols. The long form is
 [wisp's docs/clean-room.md](https://github.com/tompassarelli/wisp/blob/main/docs/clean-room.md).
 
 Two ways for a map to support a controller:
