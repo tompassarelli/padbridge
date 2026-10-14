@@ -452,7 +452,7 @@ fn shield(control: Control, triggers: TriggerShields) -> Binding {
     match (control, mode) {
         (Control::Rt, TriggerShield::Full) => bind(control, "Right shield", key("g")),
         (_, TriggerShield::Full) => bind(control, "Shield", key("q")),
-        (_, TriggerShield::Light) => bind(control, "Light shield", key("t")),
+        (_, TriggerShield::Light) => bind(control, "Light shield", key("a")),
     }
 }
 
@@ -462,11 +462,11 @@ pub fn remap(bindings: Vec<Binding>, remaps: &Remaps, triggers: TriggerShields) 
     kept.chain(remaps.iter().filter_map(|(&control, step)| Some(match step {
         Move::Attack => bind(control, "Attack", key("n")),
         Move::Special => bind(control, "Special", key("u")),
-        Move::Jump => bind(control, "Jump", key("i")),
+        Move::Jump => bind(control, "Jump", key("z")),
         Move::Grab => bind(control, "Grab", key("o")),
         Move::Shield => shield(control, triggers),
         Move::Tilt => bind(control, "Tilt", key("p")),
-        Move::ShortHop => bind(control, "Short hop", key("z")),
+        Move::ShortHop => bind(control, "Short hop", key("i")),
         Move::Meter => bind(control, "Meter", key("x")),
         Move::None => return None,
     }))).collect()
@@ -517,7 +517,7 @@ pub fn pad_bindings(preset: PadPreset, triggers: TriggerShields, right_stick: Ri
 pub fn fighter_bindings_with(preset: PadPreset, triggers: TriggerShields, right_stick: RightStick) -> Vec<Binding> {
     use Control::*;
     let (attack, special, jump, grab, short_hop, tilt) =
-        (key("n"), key("u"), key("i"), key("o"), key("z"), key("p"));
+        (key("n"), key("u"), key("z"), key("o"), key("i"), key("p"));
     let buttons = match preset {
         PadPreset::Melee => vec![
             bind(A, "Attack", attack), bind(B, "Special", special), bind(X, "Jump", jump.clone()), bind(Y, "Jump", jump),

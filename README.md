@@ -215,10 +215,10 @@ Three presets choose the buttons; sticks and Start are the same in all of them.
 | --- | --- | --- | --- |
 | A | Attack N | Attack N | Attack N |
 | B | Special U | Special U | Grab O |
-| X | Jump I | Grab O | Special U |
-| Y | Jump I | Jump I | Jump I |
-| RB | Grab O | Jump I | Meter X (+ Special: EX) |
-| LB | — | — | Short hop Z (even held) |
+| X | Jump Z | Grab O | Special U |
+| Y | Jump Z | Jump Z | Jump Z |
+| RB | Grab O | Jump Z | Meter X (+ Special: EX) |
+| LB | — | — | Short hop I (even held) |
 | LT | Shield Q | Shield Q | Shield Q |
 | RT | Shield G (right trigger) | Shield G (right trigger) | Shield G (right trigger) |
 | Start | Pause Y | Pause Y | Pause Y |

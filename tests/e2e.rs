@@ -535,8 +535,8 @@ fn helper_types_the_layout_only_into_the_focused_game() {
     for (press, release, keys) in [
         ("button a 1", "button a 0", vec!["n"]),
         ("button x 1", "button x 0", vec!["u"]),
-        ("button b 1", "button b 0", vec!["i"]),
-        ("button y 1", "button y 0", vec!["i"]),
+        ("button b 1", "button b 0", vec!["z"]),
+        ("button y 1", "button y 0", vec!["z"]),
         ("axis lefty -32768", "axis lefty 0", vec!["space"]),
         (
             "button rightshoulder 1",
@@ -571,10 +571,10 @@ fn helper_types_the_layout_only_into_the_focused_game() {
     let sources = [("button b 1", "button b 0"), ("button y 1", "button y 0")];
     for (first, second) in [(0, 1), (1, 0)] {
         let (first, second) = (sources[first], sources[second]);
-        h.step(first.0, &[down("i")]);
+        h.step(first.0, &[down("z")]);
         h.step(second.0, &[]);
         h.step(first.1, &[]);
-        h.step(second.1, &[up("i")]);
+        h.step(second.1, &[up("z")]);
     }
     // RT pressed while LT is held is a fresh right-trigger press.
     h.step("axis lefttrigger 32767", &[down("q")]);
@@ -612,9 +612,9 @@ fn helper_types_the_layout_only_into_the_focused_game() {
 
     // Disconnect releases everything held.
     h.step("button rightshoulder 1", &[down("o")]);
-    h.step("button b 1", &[down("i")]);
+    h.step("button b 1", &[down("z")]);
     h.os_key('o', true, "held before disconnect");
-    h.step("detach", &[up("i"), up("o")]);
+    h.step("detach", &[up("z"), up("o")]);
     h.os_key('o', false, "released on disconnect");
     h.os_key('i', false, "released on disconnect");
 
