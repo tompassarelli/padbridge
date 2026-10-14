@@ -316,7 +316,7 @@ pub enum Mode {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
     AnyMap,
-    Menu,
+    Menu { start_on_keys: bool },
     Keys,
 }
 
@@ -324,7 +324,7 @@ impl Kind {
     pub fn name(self) -> &'static str {
         match self {
             Kind::AnyMap => "Any map",
-            Kind::Menu => "menu pointer",
+            Kind::Menu { .. } => "menu pointer",
             Kind::Keys => "fighter keys",
         }
     }

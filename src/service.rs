@@ -762,7 +762,7 @@ pub fn run(config: &Config, profile: &mut dyn Profile, stop: &AtomicBool, mut re
         // profile, or the pointer in the map's menus (never during play).
         let menu = resolved == model::Profile::Map && profile.pointer_menu()
             && status.helper.as_ref().is_none_or(|helper| !helper.in_match);
-        let kind = if menu { Some(any_map::Kind::Menu) } else if keys { Some(any_map::Kind::Keys) } else if resolved == model::Profile::AnyMap { Some(any_map::Kind::AnyMap) } else { None };
+        let kind = if menu { Some(any_map::Kind::Menu { start_on_keys: keys }) } else if keys { Some(any_map::Kind::Keys) } else if resolved == model::Profile::AnyMap { Some(any_map::Kind::AnyMap) } else { None };
         let want = output_target(game.as_ref(), pad.as_ref(), kind);
         if any_map_running.as_ref().map(|(window, pid, kind, ..)| (window.clone(), *pid, *kind)) != want {
             if let Some((_, _, kind, stop, _)) = any_map_running.take() {
@@ -774,7 +774,7 @@ pub fn run(config: &Config, profile: &mut dyn Profile, stop: &AtomicBool, mut re
                 let (send, receive) = mpsc::channel();
                 let (stop, focused) = (Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false)));
                 let mode = match kind {
-                    any_map::Kind::Menu => any_map::Mode::Menu { start_on_keys: keys },
+                    any_map::Kind::Menu { start_on_keys } => any_map::Mode::Menu { start_on_keys },
                     any_map::Kind::Keys => any_map::Mode::Keys(settings.clone()),
                     any_map::Kind::AnyMap => any_map::Mode::AnyMap(bindings.clone()),
                 };
@@ -854,7 +854,7 @@ pub fn run(config: &Config, profile: &mut dyn Profile, stop: &AtomicBool, mut re
         }
         // Without a game, looking once a second is enough and costs little.
         // The menu pointer must stop promptly when play begins.
-        let pointing = any_map_running.as_ref().is_some_and(|(_, _, kind, ..)| *kind == any_map::Kind::Menu);
+        let pointing = any_map_running.as_ref().is_some_and(|(_, _, kind, ..)| matches!(kind, any_map::Kind::Menu { .. }));
         thread::sleep(if idle { config.poll.max(IDLE_POLL) } else if pointing { config.poll.min(MENU_POLL) } else { config.poll });
     }
     if let Some(current) = running.take() {
