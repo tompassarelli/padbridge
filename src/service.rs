@@ -18,8 +18,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
     fs,
-    io::{BufRead, BufReader, Write},
-    os::unix::net::UnixStream,
+    io::{BufRead, BufReader},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::{
@@ -430,14 +429,8 @@ pub fn niri_socket() -> Option<PathBuf> {
 }
 
 fn niri_window(socket: &Path, pid: u32, title: &str, class: &str) -> Result<Option<u64>, String> {
-    let mut stream = UnixStream::connect(socket).map_err(|e| e.to_string())?;
-    stream.set_read_timeout(Some(Duration::from_millis(500))).map_err(|e| e.to_string())?;
-    writeln!(stream, "\"Windows\"").map_err(|e| e.to_string())?;
-    stream.shutdown(std::net::Shutdown::Write).map_err(|e| e.to_string())?;
-    let mut reply = String::new();
-    BufReader::new(stream).read_line(&mut reply).map_err(|e| e.to_string())?;
-    let parsed: Value = serde_json::from_str(&reply).map_err(|e| e.to_string())?;
-    Ok(niri_game_window(parsed.get("Ok").and_then(|ok| ok.get("Windows")).unwrap_or(&Value::Null), pid, title, class))
+    let windows = crate::niri::request(socket, "Windows", Duration::from_millis(500))?;
+    Ok(niri_game_window(&windows, pid, title, class))
 }
 
 /// The one niri window that is the game: its own PID, or (through

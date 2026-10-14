@@ -6,6 +6,8 @@ pub mod output;
 pub mod pad_ingress;
 pub mod stick;
 #[cfg(target_os = "linux")]
+mod niri;
+#[cfg(target_os = "linux")]
 pub mod service;
 #[cfg(target_os = "linux")]
 pub mod wlr;
