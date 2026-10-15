@@ -18,6 +18,28 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # New structural debt (import cycle, layer violation, oversize file or function, rising hotspot) against structure.toml (north:harness/code-health).
+  code-health:
+    if: github.event_name != 'workflow_dispatch' || github.ref != 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.13
+      - run: npm i -g @ast-grep/cli@0.42.1
+      - run: git clone --depth 1 https://github.com/tompassarelli/north "$RUNNER_TEMP/north"
+      - env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [ "$EVENT" = push ] && [ "$REF" = refs/heads/main ]; then base=$BEFORE; else base=$(git merge-base origin/main HEAD); fi
+          bun "$RUNNER_TEMP/north/harness/code-health/cli.ts" gate "$base" HEAD
+
   build:
     strategy:
       fail-fast: false
