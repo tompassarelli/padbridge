@@ -1,0 +1,67 @@
+# padbridge structure.toml (structure-architect planner, 15 Oct 2026). Lands at repo root as structure.toml.
+# TARGET layers from padbridge-design.md section 2 mapped onto today's files; target paths are listed so P1-P3 only delete old globs.
+# First matching module wins.
+
+[thresholds]
+file_lines = 600            # 17 Rust files, p50 151, p90 907 (inline #[cfg(test)] modules count); 6 files over 600 are frozen
+function_lines = 80
+function_complexity = 15
+hotspot_top = 2
+
+[review]
+commits = 100
+hand_lines_added = 5000
+days = 7
+hotspot_score = 0
+
+[[module]]
+name = "tests"
+thresholds = { function_lines = 150, function_complexity = 30 }
+paths = ["tests/**", "model/tests/**", "protocol/tests/**"]
+responsibility = "Integration, e2e, layout and clean-room tests."
+may_use = ["protocol", "bindings", "leaving", "emit", "focus", "service", "cli"]
+
+[[module]]
+name = "leaving"
+paths = ["model/src/pad.rs", "src/pad_ingress.rs"]
+responsibility = "Smashcraft analog ingress packet and experiment; moves to smashcraft/controller in P2. No new importers."
+may_use = ["protocol", "bindings"]
+
+[[module]]
+name = "bindings"
+paths = ["protocol/src/bindings/**", "model/src/any_map.rs", "src/stick.rs"]
+responsibility = "Binding vocabulary, pad physics defaults and the one Mapper from pad state to key, click and pointer events."
+may_use = ["protocol"]
+
+[[module]]
+name = "protocol"
+paths = ["protocol/**", "model/**"]
+responsibility = "Everything that crosses a process boundary: TCP wire, plug-in protocol, settings, status snapshot. Serde only, no I/O, no map names."
+may_use = []
+
+[[module]]
+name = "focus"
+paths = ["src/focus/**", "src/focus.rs", "src/wlr.rs"]
+responsibility = "Foreground gate with per-OS adapters and Wayland toplevel tracking."
+may_use = []
+
+[[module]]
+name = "emit"
+paths = ["src/emit/**", "src/lib.rs", "src/output.rs"]
+responsibility = "The --emit helper core: SDL sampling, event mapping and key delivery."
+may_use = ["bindings", "protocol", "focus"]
+
+[[module]]
+name = "service"
+paths = ["src/service/**", "src/service.rs"]
+responsibility = "Always-on service: discovery, plug-in supervision, TCP interface, Any-map desktop output."
+may_use = ["emit", "focus", "bindings", "protocol"]
+
+[[module]]
+name = "cli"
+paths = ["src/main.rs", "src/bin/**"]
+responsibility = "Entry points: service, emit helper, stand-in window."
+may_use = ["service", "emit", "focus", "bindings", "protocol", "leaving"]
+
+[ignore]
+paths = ["target/**", "contract/**", "examples/**"]
