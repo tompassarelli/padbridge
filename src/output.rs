@@ -1,4 +1,4 @@
-use crate::{Action, Transition};
+use crate::{KeyOrClick, Transition};
 use enigo::{Direction, Enigo, Key, Keyboard, Settings};
 use std::collections::BTreeSet;
 
@@ -11,7 +11,7 @@ pub trait Output {
 /// eligibility before every press; this backend does not address a game window.
 pub struct KeyboardOutput {
     enigo: Enigo,
-    owned: BTreeSet<Action>,
+    owned: BTreeSet<KeyOrClick>,
 }
 
 impl KeyboardOutput {

@@ -41,13 +41,13 @@ may_use = []
 
 [[module]]
 name = "focus"
-paths = ["src/focus/**", "src/focus.rs", "src/wlr.rs"]
+paths = ["src/focus/**", "src/focus.rs", "src/wlr.rs", "src/rng.rs"]
 responsibility = "Foreground gate with per-OS adapters and Wayland toplevel tracking."
 may_use = []
 
 [[module]]
 name = "emit"
-paths = ["src/emit/**", "src/lib.rs", "src/output.rs"]
+paths = ["src/emit/**", "src/lib.rs", "src/output.rs", "src/properties.rs"]
 responsibility = "The --emit helper core: SDL sampling, event mapping and key delivery."
 may_use = ["bindings", "protocol", "focus"]
 
@@ -59,7 +59,7 @@ may_use = ["emit", "focus", "bindings", "protocol"]
 
 [[module]]
 name = "cli"
-paths = ["src/main.rs", "src/bin/**"]
+paths = ["src/main.rs", "src/cli.rs", "src/cli/**", "src/bin/**"]
 responsibility = "Entry points: service, emit helper, stand-in window."
 may_use = ["service", "emit", "focus", "bindings", "protocol", "leaving"]
 
