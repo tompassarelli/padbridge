@@ -217,8 +217,8 @@ Three presets choose the buttons; sticks and Start are the same in all of them.
 | B | Special U | Special U | Grab O |
 | X | Jump Z | Grab O | Special U |
 | Y | Jump Z | Jump Z | Jump Z |
-| RB | Grab O | Jump Z | Meter X (+ Special: EX) |
-| LB | — | — | Short hop I (even held) |
+| RB | Grab O | Jump Z | EX special X |
+| LB | EX special X | EX special X | Short hop I (even held) |
 | LT | Shield Q | Shield Q | Shield Q |
 | RT | Shield G (right trigger) | Shield G (right trigger) | Shield G (right trigger) |
 | Start | Pause Y | Pause Y | Pause Y |
@@ -228,10 +228,10 @@ Three presets choose the buttons; sticks and Start are the same in all of them.
 
 **melee**, the default new players get, is the GameCube layout by function:
 A attacks, B specials, X and Y jump (tap for a short hop, hold for a full
-hop), Z (RB) grabs, either trigger shields (RT on its own key, so pressing it while holding LT is a fresh press) and LB is free. **z-jump** is the common Melee swap: Z (RB) jumps, which frees a face
+hop), Z (RB) grabs, either trigger shields (RT on its own key, so pressing it while holding LT is a fresh press) and LB is the EX special. **z-jump** is the common Melee swap: Z (RB) jumps, which frees a face
 button, X, for grab. **tom** keeps X special and B grab, makes LB a dedicated
-short hop and Y an ordinary jump, and makes RB the Meter button: RB +
-Special is EX (Shield + Special still is). No preset has a tilt/walk
+short hop and Y an ordinary jump, and makes RB the EX special: RB with a
+direction casts that special's EX form. No preset has a tilt/walk
 modifier; it remains a remap (`tilt`). In every preset a
 shield press during jump squat comes out as an air dodge on the first
 airborne frame (a wavedash).
@@ -248,7 +248,7 @@ previous remaps; the service saves them with the other settings in
 `x`, `y`, `lb`, `rb`, `lt`, `rt` and `left_stick`, named by position as in
 layout files (on a GameCube pad after its letter swap: `x` is the printed B);
 moves are `attack`, `special`, `jump`, `grab`, `shield`, `tilt`, `short_hop`,
-`meter` and `none` (unbound). A trigger remapped to shield keeps its full or light
+`ex_special` and `none` (unbound). A trigger remapped to shield keeps its full or light
 choice; shield on a button is full shield. `padbridge --remaps
 lb=grab,rb=none` takes the same remaps, and `model::ControllerSettings::bindings`
 gives the remapped layout a window shows.

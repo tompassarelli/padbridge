@@ -112,17 +112,17 @@ pub enum Move {
     Shield,
     Tilt,
     ShortHop,
-    Meter,
+    ExSpecial,
     None,
 }
 
 impl Move {
-    pub const ALL: [Self; 9] = [Self::Attack, Self::Special, Self::Jump, Self::Grab, Self::Shield, Self::Tilt, Self::ShortHop, Self::Meter, Self::None];
+    pub const ALL: [Self; 9] = [Self::Attack, Self::Special, Self::Jump, Self::Grab, Self::Shield, Self::Tilt, Self::ShortHop, Self::ExSpecial, Self::None];
 
     pub fn name(self) -> &'static str {
         match self {
             Self::Attack => "attack", Self::Special => "special", Self::Jump => "jump", Self::Grab => "grab",
-            Self::Shield => "shield", Self::Tilt => "tilt", Self::ShortHop => "short_hop", Self::Meter => "meter", Self::None => "none",
+            Self::Shield => "shield", Self::Tilt => "tilt", Self::ShortHop => "short_hop", Self::ExSpecial => "ex_special", Self::None => "none",
         }
     }
 
@@ -185,7 +185,7 @@ pub fn remap(bindings: Vec<Binding>, remaps: &Remaps, triggers: TriggerShields) 
         Move::Shield => shield(control, triggers),
         Move::Tilt => bind(control, "Tilt", key("p")),
         Move::ShortHop => bind(control, "Short hop", key("i")),
-        Move::Meter => bind(control, "Meter", key("x")),
+        Move::ExSpecial => bind(control, "EX special", key("x")),
         Move::None => return None,
     }))).collect()
 }
@@ -239,15 +239,15 @@ pub fn fighter_bindings_with(preset: PadPreset, triggers: TriggerShields, right_
     let buttons = match preset {
         PadPreset::Melee => vec![
             bind(A, "Attack", attack), bind(B, "Special", special), bind(X, "Jump", jump.clone()), bind(Y, "Jump", jump),
-            bind(Rb, "Grab", grab), shield(Lt, triggers), shield(Rt, triggers),
+            bind(Rb, "Grab", grab), bind(Lb, "EX special", key("x")), shield(Lt, triggers), shield(Rt, triggers),
         ],
         PadPreset::ZJump => vec![
             bind(A, "Attack", attack), bind(B, "Special", special), bind(X, "Grab", grab), bind(Y, "Jump", jump.clone()),
-            bind(Rb, "Jump", jump), shield(Lt, triggers), shield(Rt, triggers),
+            bind(Rb, "Jump", jump), bind(Lb, "EX special", key("x")), shield(Lt, triggers), shield(Rt, triggers),
         ],
         PadPreset::Tom => vec![
             bind(A, "Attack", attack), bind(B, "Grab", grab), bind(X, "Special", special), bind(Y, "Jump", jump),
-            bind(Lb, "Short hop", short_hop), bind(Rb, "Meter", key("x")), shield(Lt, triggers), shield(Rt, triggers),
+            bind(Lb, "Short hop", short_hop), bind(Rb, "EX special", key("x")), shield(Lt, triggers), shield(Rt, triggers),
         ],
         PadPreset::Script => vec![
             bind(A, "Attack", attack), bind(X, "Special", special), bind(B, "Jump", jump.clone()), bind(Y, "Jump", jump),

@@ -391,7 +391,7 @@ mod contract {
     // Smashcraft's Action order and key saves: smashcraft:ts/src/game/input/actions.ts and keyBindings.ts
     // (presetBindings("standard"), decodeBindings, upgradeDefaults); Y starts the match through its own trigger in shell.ts.
     const ACTIONS: [&str; 18] = ["moveLeft", "moveRight", "moveDown", "moveUp", "jump", "attack", "special", "grab", "leftTrigger",
-        "rightTrigger", "smashLeft", "smashRight", "smashUp", "smashDown", "walk", "lightShield", "shortHop", "meter"];
+        "rightTrigger", "smashLeft", "smashRight", "smashUp", "smashDown", "walk", "lightShield", "shortHop", "exSpecial"];
 
     fn code(key: &str) -> u8 {
         if key == "space" { 32 } else { key.to_ascii_uppercase().as_bytes()[0] }
@@ -399,7 +399,7 @@ mod contract {
 
     fn standard() -> Vec<[u8; 2]> {
         vec![[b'W', 0], [b'R', 0], [b'E', 0], [32, 0], [b'Z', b'8'], [b'N', 0], [b'U', 0], [b'O', 0], [b'Q', 0], [b'7', b'G'],
-            [b'B', 191], [b'M', 0], [b'J', 0], [b'H', 0], [b'P', 0], [b'A', 0], [b'I', 0], [b'X', 0]]
+            [b'B', 191], [b'M', 0], [b'J', 0], [b'H', 0], [b'P', 0], [b'A', 0], [b'I', 0], [b'9', b'X']]
     }
 
     fn saved(file: &str) -> Vec<[u8; 2]> {
@@ -414,7 +414,7 @@ mod contract {
         let action = |name: &str| ACTIONS.iter().position(|a| *a == name).unwrap();
         let free = |keys: &[[u8; 2]], candidates: &[u8]| candidates.iter().all(|c| !keys.iter().flatten().any(|k| k == c));
         if keys[action("lightShield")][1] == 0 && free(&keys, b"T") { keys[action("lightShield")][1] = b'T'; }
-        if keys[action("meter")][0] == 0 && free(&keys, b"X") { keys[action("meter")][0] = b'X'; }
+        if keys[action("exSpecial")][1] == 0 && free(&keys, b"X") { keys[action("exSpecial")][1] = b'X'; }
         if keys[action("rightTrigger")][1] == 0 && free(&keys, b"G") { keys[action("rightTrigger")][1] = b'G'; }
         if keys[action("shortHop")][0] == 0 && free(&keys, b"Z") { keys[action("shortHop")][0] = b'Z'; }
         if version == "K1" && free(&keys, b"P") { keys[action("walk")][0] = b'P'; }
