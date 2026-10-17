@@ -1,7 +1,8 @@
 {
-  "about": "Tom's binding contract. The keys come only from the model (model::fighter_bindings_with, model::pad_bindings, service::any_map::menu_bindings); this file maps each action label there to the Smashcraft action its key must reach, in the map's standard keys and in Tom's saved bindings (tom-saved-bindings.pld, copied read-only from his CustomMapData). src/service/any_map.rs checks both.",
+  "about": "Tom's binding contract. The keys come only from the model (model::fighter_bindings_with, model::pad_bindings, service::any_map::menu_bindings); this file maps each action label there to the Smashcraft action its key must reach through the map's pad layer (smashcraft padKeys) under its ESDF, Hitbox and Custom presets and Tom's saved bindings (tom-saved-bindings.pld, copied read-only from his CustomMapData). src/service/any_map.rs checks both.",
   "rules": [
     "LT and RT both shield; RT presses its own key, so a press while LT is held is a fresh right-trigger press.",
+    "Every fighter key is a pad-layer key no keyboard preset binds, so the pad reaches the same actions whichever keyboard preset the player chose.",
     "Start starts the match regardless of cursor position: it presses the Y key on every screen and never clicks."
   ],
   "map_actions": {

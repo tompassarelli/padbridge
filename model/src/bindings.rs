@@ -36,7 +36,8 @@ pub enum Control {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Press {
-    /// A keyboard key by its name: a letter or digit, or one of `space`,
+    /// A keyboard key by its name: a letter, digit or pad-layer punctuation
+    /// character (`pad_key::PUNCTUATION`), or one of `space`,
     /// `escape`, `tab`, `enter`, `up`, `down`, `left`, `right`, `f1`..`f12`.
     Key(String),
     LeftClick,
@@ -63,6 +64,36 @@ fn bind(control: Control, action: &str, press: Press) -> Binding {
 
 fn key(name: &str) -> Press {
     Press::Key(name.to_owned())
+}
+
+/// Smashcraft's pad layer (`padKeys` in its `contracts/controller.json`): the
+/// keys each fighter action is pressed on, none of them in a keyboard preset.
+pub mod pad_key {
+    pub const ATTACK: char = 'c';
+    pub const SPECIAL: char = 'v';
+    pub const JUMP: char = 't';
+    pub const SHORT_HOP: char = '1';
+    pub const GRAB: char = '2';
+    pub const SHIELD: char = '3';
+    pub const RIGHT_SHIELD: char = '4';
+    pub const LIGHT_SHIELD: char = '5';
+    pub const TILT: char = '6';
+    pub const EX_SPECIAL: char = '`';
+    pub const LEFT: char = '[';
+    pub const RIGHT: char = ']';
+    pub const UP: char = ';';
+    pub const DOWN: char = '\'';
+    pub const C_LEFT: char = ',';
+    pub const C_RIGHT: char = '.';
+    pub const C_UP: char = '-';
+    pub const C_DOWN: char = '\\';
+    pub const PAUSE: char = 'y';
+    /// The punctuation among them, which `Press::Key` also names by the character.
+    pub const PUNCTUATION: [char; 9] = [EX_SPECIAL, LEFT, RIGHT, UP, DOWN, C_LEFT, C_RIGHT, C_UP, C_DOWN];
+}
+
+fn pad(c: char) -> Press {
+    Press::Key(c.to_string())
 }
 
 /// The default fighter layout (Xbox labels), as the README's mapping table:
@@ -168,9 +199,9 @@ pub fn parse_remaps(text: &str) -> Result<Remaps, String> {
 fn shield(control: Control, triggers: TriggerShields) -> Binding {
     let mode = match control { Control::Lt => triggers.left, Control::Rt => triggers.right, _ => TriggerShield::Full };
     match (control, mode) {
-        (Control::Rt, TriggerShield::Full) => bind(control, "Right shield", key("g")),
-        (_, TriggerShield::Full) => bind(control, "Shield", key("q")),
-        (_, TriggerShield::Light) => bind(control, "Light shield", key("a")),
+        (Control::Rt, TriggerShield::Full) => bind(control, "Right shield", pad(pad_key::RIGHT_SHIELD)),
+        (_, TriggerShield::Full) => bind(control, "Shield", pad(pad_key::SHIELD)),
+        (_, TriggerShield::Light) => bind(control, "Light shield", pad(pad_key::LIGHT_SHIELD)),
     }
 }
 
@@ -178,14 +209,14 @@ fn shield(control: Control, triggers: TriggerShields) -> Binding {
 pub fn remap(bindings: Vec<Binding>, remaps: &Remaps, triggers: TriggerShields) -> Vec<Binding> {
     let kept = bindings.into_iter().filter(|binding| !remaps.contains_key(&binding.control));
     kept.chain(remaps.iter().filter_map(|(&control, step)| Some(match step {
-        Move::Attack => bind(control, "Attack", key("n")),
-        Move::Special => bind(control, "Special", key("u")),
-        Move::Jump => bind(control, "Jump", key("z")),
-        Move::Grab => bind(control, "Grab", key("o")),
+        Move::Attack => bind(control, "Attack", pad(pad_key::ATTACK)),
+        Move::Special => bind(control, "Special", pad(pad_key::SPECIAL)),
+        Move::Jump => bind(control, "Jump", pad(pad_key::JUMP)),
+        Move::Grab => bind(control, "Grab", pad(pad_key::GRAB)),
         Move::Shield => shield(control, triggers),
-        Move::Tilt => bind(control, "Tilt", key("p")),
-        Move::ShortHop => bind(control, "Short hop", key("i")),
-        Move::ExSpecial => bind(control, "EX special", key("x")),
+        Move::Tilt => bind(control, "Tilt", pad(pad_key::TILT)),
+        Move::ShortHop => bind(control, "Short hop", pad(pad_key::SHORT_HOP)),
+        Move::ExSpecial => bind(control, "EX special", pad(pad_key::EX_SPECIAL)),
         Move::None => return None,
     }))).collect()
 }
@@ -235,19 +266,19 @@ pub fn pad_bindings(preset: PadPreset, triggers: TriggerShields, right_stick: Ri
 pub fn fighter_bindings_with(preset: PadPreset, triggers: TriggerShields, right_stick: RightStick) -> Vec<Binding> {
     use Control::*;
     let (attack, special, jump, grab, short_hop, tilt) =
-        (key("n"), key("u"), key("z"), key("o"), key("i"), key("p"));
+        (pad(pad_key::ATTACK), pad(pad_key::SPECIAL), pad(pad_key::JUMP), pad(pad_key::GRAB), pad(pad_key::SHORT_HOP), pad(pad_key::TILT));
     let buttons = match preset {
         PadPreset::Melee => vec![
             bind(A, "Attack", attack), bind(B, "Special", special), bind(X, "Jump", jump.clone()), bind(Y, "Jump", jump),
-            bind(Rb, "Grab", grab), bind(Lb, "EX special", key("x")), shield(Lt, triggers), shield(Rt, triggers),
+            bind(Rb, "Grab", grab), bind(Lb, "EX special", pad(pad_key::EX_SPECIAL)), shield(Lt, triggers), shield(Rt, triggers),
         ],
         PadPreset::ZJump => vec![
             bind(A, "Attack", attack), bind(B, "Special", special), bind(X, "Grab", grab), bind(Y, "Jump", jump.clone()),
-            bind(Rb, "Jump", jump), bind(Lb, "EX special", key("x")), shield(Lt, triggers), shield(Rt, triggers),
+            bind(Rb, "Jump", jump), bind(Lb, "EX special", pad(pad_key::EX_SPECIAL)), shield(Lt, triggers), shield(Rt, triggers),
         ],
         PadPreset::Tom => vec![
             bind(A, "Attack", attack), bind(B, "Grab", grab), bind(X, "Special", special), bind(Y, "Jump", jump),
-            bind(Lb, "Short hop", short_hop), bind(Rb, "EX special", key("x")), shield(Lt, triggers), shield(Rt, triggers),
+            bind(Lb, "Short hop", short_hop), bind(Rb, "EX special", pad(pad_key::EX_SPECIAL)), shield(Lt, triggers), shield(Rt, triggers),
         ],
         PadPreset::Script => vec![
             bind(A, "Attack", attack), bind(X, "Special", special), bind(B, "Jump", jump.clone()), bind(Y, "Jump", jump),
@@ -257,15 +288,15 @@ pub fn fighter_bindings_with(preset: PadPreset, triggers: TriggerShields, right_
     };
     let right = |smash: &'static str, tilt: &'static str| match right_stick { RightStick::Smash => smash, RightStick::Tilt => tilt };
     buttons.into_iter().chain([
-        bind(Start, "Pause", key("y")),
-        bind(LeftLeft, "Move left", key("w")),
-        bind(LeftRight, "Move right", key("r")),
-        bind(LeftDown, "Crouch / fast fall", key("e")),
-        bind(LeftUp, "Up (aim, up special)", key("space")),
-        bind(RightUp, right("Up smash", "Up tilt / up air"), key("j")),
-        bind(RightDown, right("Down smash", "Down tilt / down air"), key("h")),
-        bind(RightLeft, right("Smash left", "Tilt left / air left"), key("b")),
-        bind(RightRight, right("Smash right", "Tilt right / air right"), key("m")),
+        bind(Start, "Pause", pad(pad_key::PAUSE)),
+        bind(LeftLeft, "Move left", pad(pad_key::LEFT)),
+        bind(LeftRight, "Move right", pad(pad_key::RIGHT)),
+        bind(LeftDown, "Crouch / fast fall", pad(pad_key::DOWN)),
+        bind(LeftUp, "Up (aim, up special)", pad(pad_key::UP)),
+        bind(RightUp, right("Up smash", "Up tilt / up air"), pad(pad_key::C_UP)),
+        bind(RightDown, right("Down smash", "Down tilt / down air"), pad(pad_key::C_DOWN)),
+        bind(RightLeft, right("Smash left", "Tilt left / air left"), pad(pad_key::C_LEFT)),
+        bind(RightRight, right("Smash right", "Tilt right / air right"), pad(pad_key::C_RIGHT)),
     ]).collect()
 }
 

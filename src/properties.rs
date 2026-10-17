@@ -126,7 +126,7 @@ fn sample(rng: &mut Rng) -> Sample {
 }
 
 fn key_name(action: KeyOrClick) -> String {
-    match action.key() { ' ' => "space".to_owned(), key => key.to_string() }
+    action.key().to_string()
 }
 
 #[test]

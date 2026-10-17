@@ -22,7 +22,7 @@ pub fn key_of(name: &str) -> Option<enigo::Key> {
     use enigo::Key;
     let mut chars = name.chars();
     if let (Some(c), None) = (chars.next(), chars.next()) {
-        return c.is_ascii_alphanumeric().then(|| Key::Unicode(c.to_ascii_lowercase()));
+        return (c.is_ascii_alphanumeric() || crate::model::pad_key::PUNCTUATION.contains(&c)).then(|| Key::Unicode(c.to_ascii_lowercase()));
     }
     Some(match name {
         "space" => Key::Space,

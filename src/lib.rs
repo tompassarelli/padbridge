@@ -90,26 +90,27 @@ impl KeyOrClick {
     }
 
     pub fn key(self) -> char {
+        use model::pad_key;
         match self {
-            Self::Attack => 'n',
-            Self::Special => 'u',
-            Self::Jump => 'z',
-            Self::ShortHop => 'i',
-            Self::Grab => 'o',
-            Self::Shield => 'q',
-            Self::RightShield => 'g',
-            Self::LightShield => 'a',
-            Self::Walk => 'p',
-            Self::ExSpecial => 'x',
-            Self::Start => 'y',
-            Self::Left => 'w',
-            Self::Right => 'r',
-            Self::Down => 'e',
-            Self::Up => ' ',
-            Self::CLeft => 'b',
-            Self::CRight => 'm',
-            Self::CUp => 'j',
-            Self::CDown => 'h',
+            Self::Attack => pad_key::ATTACK,
+            Self::Special => pad_key::SPECIAL,
+            Self::Jump => pad_key::JUMP,
+            Self::ShortHop => pad_key::SHORT_HOP,
+            Self::Grab => pad_key::GRAB,
+            Self::Shield => pad_key::SHIELD,
+            Self::RightShield => pad_key::RIGHT_SHIELD,
+            Self::LightShield => pad_key::LIGHT_SHIELD,
+            Self::Walk => pad_key::TILT,
+            Self::ExSpecial => pad_key::EX_SPECIAL,
+            Self::Start => pad_key::PAUSE,
+            Self::Left => pad_key::LEFT,
+            Self::Right => pad_key::RIGHT,
+            Self::Down => pad_key::DOWN,
+            Self::Up => pad_key::UP,
+            Self::CLeft => pad_key::C_LEFT,
+            Self::CRight => pad_key::C_RIGHT,
+            Self::CUp => pad_key::C_UP,
+            Self::CDown => pad_key::C_DOWN,
         }
     }
 }

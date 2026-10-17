@@ -24,7 +24,7 @@ pub struct TriggerShields {
     pub right: TriggerShield,
 }
 
-/// What a right-stick flick asks for; Tilt also holds Tilt (P), which turns the smash into a tilt or aerial.
+/// What a right-stick flick asks for; Tilt also holds Tilt (6), which turns the smash into a tilt or aerial.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RightStick {

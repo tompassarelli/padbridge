@@ -72,7 +72,7 @@ Release binaries for Linux and Windows are attached to every
    - `control`: `a`, `b`, `x`, `y`, `lb`, `rb`, `lt`, `rt`, `start`, `back`,
      `left_stick` (click), `dpad_up|down|left|right`, and each stick direction
      `left_up|down|left|right`, `right_up|down|left|right`. Bind each at most once.
-   - `press`: `{"key": NAME}` (a letter or digit, `space`, `escape`, `tab`,
+   - `press`: `{"key": NAME}` (a letter, digit or one of `` ` [ ] ; ' , . - \ ``, `space`, `escape`, `tab`,
      `enter`, `up`, `down`, `left`, `right`, `f1`..`f24`, `insert`, `delete`,
      `home`, `end`, `pageup`, `pagedown`), `"left_click"`, `"right_click"`, or
      `"pointer"` (the stick moves the mouse pointer).
@@ -211,20 +211,25 @@ Three presets choose the buttons; sticks and Start are the same in all of them.
 `padbridge` and plug-in helpers accept `--preset melee|z-jump|tom`, and
 `--list` prints them.
 
+The keys are the map's pad layer (smashcraft `contracts/controller.json`,
+`padKeys`): keys no keyboard preset binds, which the map reads as these actions
+whatever keyboard preset the player chose, unless the player bound that key
+themselves.
+
 | Control | melee (default) | z-jump | tom |
 | --- | --- | --- | --- |
-| A | Attack N | Attack N | Attack N |
-| B | Special U | Special U | Grab O |
-| X | Jump Z | Grab O | Special U |
-| Y | Jump Z | Jump Z | Jump Z |
-| RB | Grab O | Jump Z | EX special X |
-| LB | EX special X | EX special X | Short hop I (even held) |
-| LT | Shield Q | Shield Q | Shield Q |
-| RT | Shield G (right trigger) | Shield G (right trigger) | Shield G (right trigger) |
+| A | Attack C | Attack C | Attack C |
+| B | Special V | Special V | Grab 2 |
+| X | Jump T | Grab 2 | Special V |
+| Y | Jump T | Jump T | Jump T |
+| RB | Grab 2 | Jump T | EX special ` |
+| LB | EX special ` | EX special ` | Short hop 1 (even held) |
+| LT | Shield 3 | Shield 3 | Shield 3 |
+| RT | Shield 4 (right trigger) | Shield 4 (right trigger) | Shield 4 (right trigger) |
 | Start | Pause Y | Pause Y | Pause Y |
-| Left stick left / right / down | W / R / E | W / R / E | W / R / E |
-| Left stick up | Space (up only; no tap jump) | Space | Space |
-| Right stick up / right / down / left | J / M / H / B | J / M / H / B | J / M / H / B |
+| Left stick left / right / down | [ / ] / ' | [ / ] / ' | [ / ] / ' |
+| Left stick up | ; (up only; no tap jump) | ; | ; |
+| Right stick up / right / down / left | - / . / \ / , | - / . / \ / , | - / . / \ / , |
 
 **melee**, the default new players get, is the GameCube layout by function:
 A attacks, B specials, X and Y jump (tap for a short hop, hold for a full
@@ -238,7 +243,7 @@ airborne frame (a wavedash).
 
 The right stick smashes by default. Right stick Tilt attacks (a window's
 `{"right_stick":"tilt"}` or `--right-stick smash|tilt`, saved as `"right_stick"`)
-also holds Tilt (P) while it is pushed, so it tilts on the ground and throws
+also holds Tilt (6) while it is pushed, so it tilts on the ground and throws
 aerials in the air, in any preset.
 
 Remaps change single buttons on top of a preset, e.g. grab on LB instead of RB.
@@ -270,14 +275,14 @@ the service reads Linux evdev pads and does not apply it.
 
 Either trigger can instead light shield: choose Full shield or Light shield for
 each trigger in a window, or use `--left-trigger full|light` and
-`--right-trigger full|light`. Light shield presses T and requests
-pressure 77; full shield presses Q on either trigger and requests 255. Both
-triggers share Q because it is the shield key every saved map binding has;
+`--right-trigger full|light`. Light shield presses 5 and requests
+pressure 77; full shield presses 3 on LT and 4 on RT and requests 255.
+
 The model's preset bindings (`model::fighter_bindings_with`, `model::pad_bindings`,
 `ControllerSettings::bindings`) are the only binding list: the service presses
 them and windows show them. contract/bindings.json maps each action label to the
-Smashcraft action its key must reach, and the tests check that against the map's
-standard keys and a copy of a saved binding set (contract/tom-saved-bindings.pld).
+Smashcraft action its key must reach, and the tests check that through the map's pad layer under its
+ESDF, Hitbox and Custom presets and a copy of a saved binding set (contract/tom-saved-bindings.pld).
 
 Tap jump is off by default. A window can enable it, or
 `--tap-jump on|off`. When enabled,

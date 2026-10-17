@@ -150,7 +150,7 @@ mod os {
     use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
 
     pub fn key_down(key: char) -> bool {
-        // Letter virtual-key codes are the uppercase ASCII values.
+        // Letter and digit virtual-key codes are the uppercase ASCII values.
         // SAFETY: GetAsyncKeyState only reads the desktop's key state.
         (unsafe { GetAsyncKeyState(key.to_ascii_uppercase() as i32) } as u16) & 0x8000 != 0
     }
@@ -196,11 +196,11 @@ mod os {
     pub fn key_down(key: char) -> bool {
         // ANSI virtual key codes from HIToolbox Events.h.
         let code = match key {
-            'i' => 0x22,
-            'n' => 0x2D,
-            'o' => 0x1F,
-            'q' => 0x0C,
-            'u' => 0x20,
+            'c' => 0x08,
+            'v' => 0x09,
+            '1' => 0x12,
+            '2' => 0x13,
+            '3' => 0x14,
             '7' => 0x1A,
             _ => panic!("no key code for {key}"),
         };
@@ -529,39 +529,39 @@ fn helper_types_the_layout_only_into_the_focused_game() {
         h.report()
     );
 
-    // Fighter layout: A attack, X special, B/Y jump, RB grab, LT shield on Q
-    // and RT on G, LB walk, stick directions (stick-up is only up), Start pause,
+    // Fighter layout on the map's pad keys: A attack, X special, B/Y jump, RB grab, LT shield on 3
+    // and RT on 4, LB walk, stick directions (stick-up is only up), Start pause,
     // and the right stick's four C-stick directions.
     for (press, release, keys) in [
-        ("button a 1", "button a 0", vec!["n"]),
-        ("button x 1", "button x 0", vec!["u"]),
-        ("button b 1", "button b 0", vec!["z"]),
-        ("button y 1", "button y 0", vec!["z"]),
-        ("axis lefty -32768", "axis lefty 0", vec!["space"]),
+        ("button a 1", "button a 0", vec!["c"]),
+        ("button x 1", "button x 0", vec!["v"]),
+        ("button b 1", "button b 0", vec!["t"]),
+        ("button y 1", "button y 0", vec!["t"]),
+        ("axis lefty -32768", "axis lefty 0", vec![";"]),
         (
             "button rightshoulder 1",
             "button rightshoulder 0",
-            vec!["o"],
+            vec!["2"],
         ),
         (
             "axis lefttrigger 32767",
             "axis lefttrigger -32768",
-            vec!["q"],
+            vec!["3"],
         ),
         (
             "axis righttrigger 32767",
             "axis righttrigger -32768",
-            vec!["g"],
+            vec!["4"],
         ),
-        ("button leftshoulder 1", "button leftshoulder 0", vec!["p"]),
-        ("axis leftx -32768", "axis leftx 0", vec!["w"]),
-        ("axis leftx 32767", "axis leftx 0", vec!["r"]),
-        ("axis lefty 32767", "axis lefty 0", vec!["e"]),
+        ("button leftshoulder 1", "button leftshoulder 0", vec!["6"]),
+        ("axis leftx -32768", "axis leftx 0", vec!["["]),
+        ("axis leftx 32767", "axis leftx 0", vec!["]"]),
+        ("axis lefty 32767", "axis lefty 0", vec!["'"]),
         ("button start 1", "button start 0", vec!["y"]),
-        ("axis rightx -32768", "axis rightx 0", vec!["b"]),
-        ("axis rightx 32767", "axis rightx 0", vec!["m"]),
-        ("axis righty -32768", "axis righty 0", vec!["j"]),
-        ("axis righty 32767", "axis righty 0", vec!["h"]),
+        ("axis rightx -32768", "axis rightx 0", vec![","]),
+        ("axis rightx 32767", "axis rightx 0", vec!["."]),
+        ("axis righty -32768", "axis righty 0", vec!["-"]),
+        ("axis righty 32767", "axis righty 0", vec!["\\"]),
     ] {
         h.step(press, &keys.iter().map(|k| down(k)).collect::<Vec<_>>());
         h.step(release, &keys.iter().map(|k| up(k)).collect::<Vec<_>>());
@@ -571,29 +571,29 @@ fn helper_types_the_layout_only_into_the_focused_game() {
     let sources = [("button b 1", "button b 0"), ("button y 1", "button y 0")];
     for (first, second) in [(0, 1), (1, 0)] {
         let (first, second) = (sources[first], sources[second]);
-        h.step(first.0, &[down("z")]);
+        h.step(first.0, &[down("t")]);
         h.step(second.0, &[]);
         h.step(first.1, &[]);
-        h.step(second.1, &[up("z")]);
+        h.step(second.1, &[up("t")]);
     }
     // RT pressed while LT is held is a fresh right-trigger press.
-    h.step("axis lefttrigger 32767", &[down("q")]);
-    h.step("axis righttrigger 32767", &[down("g")]);
-    h.step("axis lefttrigger -32768", &[up("q")]);
-    h.step("axis righttrigger -32768", &[up("g")]);
+    h.step("axis lefttrigger 32767", &[down("3")]);
+    h.step("axis righttrigger 32767", &[down("4")]);
+    h.step("axis lefttrigger -32768", &[up("3")]);
+    h.step("axis righttrigger -32768", &[up("4")]);
 
     // Focus loss releases held keys at the OS and suppresses later presses.
-    h.step("button a 1", &[down("n")]);
-    h.step("axis lefttrigger 32767", &[down("q")]);
-    h.os_key('n', true, "held while focused");
-    h.os_key('q', true, "held while focused");
+    h.step("button a 1", &[down("c")]);
+    h.step("axis lefttrigger 32767", &[down("3")]);
+    h.os_key('c', true, "held while focused");
+    h.os_key('3', true, "held while focused");
     h.focus_game(false);
     h.wait("helper focus loss", |h| h.eligible() == Some(false));
-    h.os_key('n', false, "released on focus loss");
-    h.os_key('q', false, "released on focus loss");
+    h.os_key('c', false, "released on focus loss");
+    h.os_key('3', false, "released on focus loss");
     h.step("button x 1", &[]);
     assert!(
-        !os::key_down('u'),
+        !os::key_down('v'),
         "unfocused press reached the OS{}",
         h.report()
     );
@@ -607,16 +607,16 @@ fn helper_types_the_layout_only_into_the_focused_game() {
     h.step("button x 1", &[]);
     h.step("button x 0", &[]);
     h.step("axis lefttrigger -32768", &[]);
-    h.step("button a 1", &[down("n")]);
-    h.step("button a 0", &[up("n")]);
+    h.step("button a 1", &[down("c")]);
+    h.step("button a 0", &[up("c")]);
 
     // Disconnect releases everything held.
-    h.step("button rightshoulder 1", &[down("o")]);
-    h.step("button b 1", &[down("z")]);
-    h.os_key('o', true, "held before disconnect");
-    h.step("detach", &[up("z"), up("o")]);
-    h.os_key('o', false, "released on disconnect");
-    h.os_key('i', false, "released on disconnect");
+    h.step("button rightshoulder 1", &[down("2")]);
+    h.step("button b 1", &[down("t")]);
+    h.os_key('2', true, "held before disconnect");
+    h.step("detach", &[up("t"), up("2")]);
+    h.os_key('2', false, "released on disconnect");
+    h.os_key('1', false, "released on disconnect");
 
     // Only the in-process virtual pad gives the helper a stdin to quit through.
     #[cfg(target_os = "macos")]

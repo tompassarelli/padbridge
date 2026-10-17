@@ -32,11 +32,7 @@ impl Output for KeyboardOutput {
         if self.owned.contains(&transition.action) == transition.pressed {
             return Ok(());
         }
-        let key = if transition.action.key() == ' ' {
-            Key::Space
-        } else {
-            Key::Unicode(transition.action.key())
-        };
+        let key = Key::Unicode(transition.action.key());
         // Track before submission: an error can follow partial OS delivery.
         if transition.pressed {
             self.owned.insert(transition.action);
