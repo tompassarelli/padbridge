@@ -216,6 +216,20 @@ The keys are the map's pad layer (smashcraft `contracts/controller.json`,
 whatever keyboard preset the player chose, unless the player bound that key
 themselves.
 
+The service and `padbridge --emit` hold every fighter key they press down for at least two 60 Hz
+frames (33.3 ms, `MIN_HOLD`): Smashcraft reads held keys once per game
+callback, and on Battle.net those come in bursts every 25 ms turn with
+0–12 ms of jitter, so a shorter tap can fall between two bursts and never
+be seen. Two frames is the longest hold that keeps a tap a short hop on
+the shortest jump squat (3 frames, counting the press frame, so the
+release must land within 2 frames). Against Wisp's fitted Battle.net model
+(`turnBursts`), it cuts the 1-frame taps that are never seen from 32.8% to
+0.6%. It turns no more of them into full hops than a physical 2-frame tap
+already gets (31.5% for a 3-frame squat, 0.1% for 4 and 5 frames). A longer press is
+released exactly when the pad releases. Pressing the opposite direction
+releases a held direction at once, and focus loss releases everything at
+once.
+
 | Control | melee (default) | z-jump | tom |
 | --- | --- | --- | --- |
 | A | Attack C | Attack C | Attack C |

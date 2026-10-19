@@ -17,7 +17,7 @@ use sdl3::{
     gamepad::{Axis, Button},
     joystick::JoystickId,
 };
-use std::collections::BTreeSet;
+use std::{collections::{BTreeMap, BTreeSet}, time::{Duration, Instant}};
 
 pub const TRIGGER_THRESHOLD: i16 = 4000;
 
@@ -87,6 +87,20 @@ impl KeyOrClick {
     fn of_press(press: &model::Press) -> Option<Self> {
         let model::Press::Key(name) = press else { return None };
         Self::BUTTONS.into_iter().find(|action| name.chars().eq([action.key()]))
+    }
+
+    pub fn opposite(self) -> Option<Self> {
+        match self {
+            Self::Left => Some(Self::Right),
+            Self::Right => Some(Self::Left),
+            Self::Down => Some(Self::Up),
+            Self::Up => Some(Self::Down),
+            Self::CLeft => Some(Self::CRight),
+            Self::CRight => Some(Self::CLeft),
+            Self::CUp => Some(Self::CDown),
+            Self::CDown => Some(Self::CUp),
+            _ => None,
+        }
     }
 
     pub fn key(self) -> char {
@@ -379,6 +393,59 @@ impl Mapper {
         }));
         self.held = next;
         changes
+    }
+}
+
+pub const MIN_HOLD: Duration = Duration::from_micros(33_333);
+
+#[derive(Debug, Default)]
+pub struct Hold {
+    down: BTreeMap<KeyOrClick, Instant>,
+    releasing: BTreeSet<KeyOrClick>,
+}
+
+impl Hold {
+    pub fn apply(&mut self, transitions: Vec<Transition>, now: Instant) -> Vec<Transition> {
+        let mut out = self.due(now);
+        for transition in transitions {
+            let action = transition.action;
+            if transition.pressed {
+                if let Some(opposite) = action.opposite().filter(|opposite| self.releasing.remove(opposite)) {
+                    self.down.remove(&opposite);
+                    out.push(Transition { action: opposite, pressed: false });
+                }
+                self.down.insert(action, now);
+                if !self.releasing.remove(&action) {
+                    out.push(transition);
+                }
+            } else if self.down.get(&action).is_some_and(|&at| now < at + MIN_HOLD) {
+                self.releasing.insert(action);
+            } else {
+                self.down.remove(&action);
+                out.push(transition);
+            }
+        }
+        out
+    }
+
+    pub fn due(&mut self, now: Instant) -> Vec<Transition> {
+        let due: Vec<KeyOrClick> = self.releasing.iter().copied().filter(|action| self.down.get(action).is_none_or(|&at| now >= at + MIN_HOLD)).collect();
+        due.into_iter()
+            .map(|action| {
+                self.releasing.remove(&action);
+                self.down.remove(&action);
+                Transition { action, pressed: false }
+            })
+            .collect()
+    }
+
+    pub fn next_due(&self) -> Option<Instant> {
+        self.releasing.iter().filter_map(|action| self.down.get(action)).min().map(|&at| at + MIN_HOLD)
+    }
+
+    pub fn release(&mut self) -> Vec<Transition> {
+        self.down.clear();
+        std::mem::take(&mut self.releasing).into_iter().map(|action| Transition { action, pressed: false }).collect()
     }
 }
 

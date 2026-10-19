@@ -8,7 +8,7 @@ use super::analog::AnalogSession;
 use padbridge::{
     EventMapper,
     focus::{self, Foreground},
-    output::{KeyboardOutput, Output},
+    output::{Held, KeyboardOutput, Output},
     selected_input,
 };
 use sdl3::{event::Event, joystick::JoystickId};
@@ -130,7 +130,7 @@ pub fn run() -> Result<(), String> {
     };
     let pad = gamepads.open(id).map_err(|e| e.to_string())?;
     let mut keyboard = if o.emit {
-        Some(KeyboardOutput::new(o.display)?)
+        Some(Held::new(KeyboardOutput::new(o.display)?))
     } else {
         None
     };
@@ -197,10 +197,8 @@ pub fn run() -> Result<(), String> {
             } else {
                 mapper.disarm()
             };
-            for transition in release {
-                if let Some(keyboard) = &mut keyboard {
-                    keyboard.apply(transition)?;
-                }
+            if let Some(keyboard) = &mut keyboard {
+                keyboard.release_now(release)?;
             }
         }
         #[cfg(target_os = "linux")]
@@ -267,10 +265,9 @@ pub fn run() -> Result<(), String> {
                         if !still_eligible {
                             event_eligible = false;
                             last_eligibility = Some(false);
-                            for release in mapper.disarm() {
-                                if let Some(keyboard) = &mut keyboard {
-                                    keyboard.apply(release)?;
-                                }
+                            let release = mapper.disarm();
+                            if let Some(keyboard) = &mut keyboard {
+                                keyboard.release_now(release)?;
                             }
                             history_transition(
                                 event_id,
@@ -286,9 +283,10 @@ pub fn run() -> Result<(), String> {
                             continue;
                         }
                         let submit_ns = o.emit.then(|| clock_ns(start));
-                        if let Some(keyboard) = &mut keyboard {
-                            keyboard.apply(transition)?;
-                        }
+                        let sent = match &mut keyboard {
+                            Some(keyboard) => keyboard.submit(transition, Instant::now())?,
+                            None => true,
+                        };
                         history_transition(
                             event_id,
                             input.capture_ns,
@@ -298,7 +296,7 @@ pub fn run() -> Result<(), String> {
                             &value,
                             transition.action,
                             transition.pressed,
-                            if o.emit { "submitted" } else { "preview" },
+                            if !sent { "held" } else if o.emit { "submitted" } else { "preview" },
                         );
                     } else {
                         history_transition(
@@ -329,10 +327,8 @@ pub fn run() -> Result<(), String> {
                     "removed",
                     "disconnected",
                 );
-                for transition in release {
-                    if let Some(keyboard) = &mut keyboard {
-                        keyboard.apply(transition)?;
-                    }
+                if let Some(keyboard) = &mut keyboard {
+                    keyboard.release_now(release)?;
                 }
             } else if matches!(&event, Event::GamepadRemapped { which, .. } if *which == id) {
                 let event_id = next_event_id(&mut next_id);
@@ -345,10 +341,8 @@ pub fn run() -> Result<(), String> {
                     "remapped",
                     "rearm-required",
                 );
-                for transition in release {
-                    if let Some(keyboard) = &mut keyboard {
-                        keyboard.apply(transition)?;
-                    }
+                if let Some(keyboard) = &mut keyboard {
+                    keyboard.release_now(release)?;
                 }
             }
         }
@@ -356,11 +350,22 @@ pub fn run() -> Result<(), String> {
         if let Some(analog) = &mut analog {
             analog.step(mapper.sample(), last_eligibility == Some(true) && mapper.armed() && pad.connected())?;
         }
-        std::thread::sleep(Duration::from_millis(4));
+        let tick = Duration::from_millis(4);
+        let wait = match &mut keyboard {
+            Some(keyboard) => {
+                keyboard.due(Instant::now())?;
+                keyboard.next_due().map_or(tick, |due| due.saturating_duration_since(Instant::now()).min(tick))
+            }
+            None => tick,
+        };
+        std::thread::sleep(wait);
+    }
+    if let Some(keyboard) = &mut keyboard {
+        keyboard.release_now(Vec::new())?;
     }
     for transition in mapper.disarm() {
         if let Some(keyboard) = &mut keyboard {
-            keyboard.apply(transition)?;
+            keyboard.output.apply(transition)?;
         }
         eprintln!(
             "# shutdown\t{}\t{}",
@@ -369,7 +374,7 @@ pub fn run() -> Result<(), String> {
         );
     }
     if let Some(keyboard) = &mut keyboard {
-        keyboard.release_owned()?;
+        keyboard.output.release_owned()?;
     }
     Ok(())
 }

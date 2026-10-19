@@ -214,6 +214,8 @@ fn generate(rng: &mut Rng) -> (InputView, BTreeSet<Control>) {
 #[test]
 fn the_service_presses_the_models_bindings_on_every_screen() {
     let mut rng = Rng(std::env::var("PROPERTY_SEED").ok().and_then(|seed| seed.parse().ok()).unwrap_or(0xc0ffee));
+    let mut clock = Instant::now();
+    let mut tick = || { clock += crate::MIN_HOLD; clock };
     for preset in PRESETS {
         let triggers = TriggerShields { left: SHIELDS[rng.below(2) as usize], right: SHIELDS[rng.below(2) as usize] };
         let right_stick = model::RightStick::ALL[rng.below(2) as usize];
@@ -227,11 +229,11 @@ fn the_service_presses_the_models_bindings_on_every_screen() {
                 _ => Driver::menu(MenuCurve::for_window_width(2560.0), true),
             };
             let mut out = Recorded::default();
-            driver.step(&InputView::default(), true, 0.0, &mut out).unwrap();
+            driver.step(&InputView::default(), true, 0.0, tick(), &mut out).unwrap();
             for _ in 0..400 {
                 let (input, controls) = generate(&mut rng);
                 out.moved = false;
-                driver.step(&input, true, 0.01, &mut out).unwrap();
+                driver.step(&input, true, 0.01, tick(), &mut out).unwrap();
                 let mut presses: Vec<&Press> = table.iter().filter(|b| controls.contains(&b.control)).map(|b| &b.press).collect();
                 if screen == "match" && right_stick == model::RightStick::Tilt && controls.iter().any(|c| RIGHT.contains(c)) {
                     presses.push(&tilt);
@@ -240,7 +242,7 @@ fn the_service_presses_the_models_bindings_on_every_screen() {
                 let pointer = screen == "menus" && controls.iter().any(|c| LEFT.contains(c));
                 assert_eq!(out.held, keys, "{} {screen}: holding {controls:?}", preset.name());
                 assert_eq!(out.moved, pointer, "{} {screen}: pointer while holding {controls:?}", preset.name());
-                driver.step(&InputView::default(), true, 0.0, &mut out).unwrap();
+                driver.step(&InputView::default(), true, 0.0, tick(), &mut out).unwrap();
                 assert!(out.held.is_empty(), "{} {screen}: {:?} still held at neutral", preset.name(), out.held);
             }
         }
@@ -253,7 +255,7 @@ fn the_service_presses_the_models_bindings_on_every_screen() {
         let mut driver = Driver::keys_for(&settings, crate::pad_ingress::Route::Digital);
         let mut out = Recorded::default();
         for input in [InputView::default(), InputView { lt: 20000, ..Default::default() }, InputView { lt: 20000, rt: 20000, ..Default::default() }] {
-            driver.step(&input, true, 0.0, &mut out).unwrap();
+            driver.step(&input, true, 0.0, tick(), &mut out).unwrap();
         }
         assert_eq!(out.held, ["3", "4"].map(String::from).into(), "{}: RT pressed while LT is held", preset.name());
     }

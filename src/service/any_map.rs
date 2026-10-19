@@ -13,7 +13,6 @@ use crate::model::{
 };
 use std::{
     fs,
-    io::Write,
     path::PathBuf,
     sync::{
         Arc,
@@ -25,9 +24,11 @@ use std::{
 };
 
 mod desktop;
+mod file;
 mod niri;
 
 use super::pointer;
+use file::FileOutput;
 pub use desktop::{DesktopOutput, key_of};
 pub use niri::{niri_window_width, niri_focused};
 
@@ -92,17 +93,18 @@ pub struct Driver {
     menu: Option<MenuCurve>,
     /// The fighter layout on keys: this mapper replaces the bindings' one.
     keys: Option<crate::Mapper>,
+    hold: crate::Hold,
     analog: crate::pad_ingress::Ingress,
 }
 
 impl Driver {
     pub fn new(bindings: Vec<Binding>) -> Self {
-        Self { mapper: Mapper::new(bindings), focused: false, menu: None, keys: None, analog: crate::pad_ingress::Ingress::new(crate::pad_ingress::Route::Digital) }
+        Self { mapper: Mapper::new(bindings), focused: false, menu: None, keys: None, hold: crate::Hold::default(), analog: crate::pad_ingress::Ingress::new(crate::pad_ingress::Route::Digital) }
     }
 
     /// The menu pointer: the left stick moves the pointer by `curve`, A and B click.
     pub fn menu(curve: MenuCurve, start_on_keys: bool) -> Self {
-        Self { mapper: Mapper::new(menu_bindings(start_on_keys)), focused: false, menu: Some(curve), keys: None, analog: crate::pad_ingress::Ingress::new(crate::pad_ingress::Route::Digital) }
+        Self { mapper: Mapper::new(menu_bindings(start_on_keys)), focused: false, menu: Some(curve), keys: None, hold: crate::Hold::default(), analog: crate::pad_ingress::Ingress::new(crate::pad_ingress::Route::Digital) }
     }
 
     /// The fighter layout on keys. Focus loss releases every key, and nothing presses
@@ -112,7 +114,7 @@ impl Driver {
     }
 
     pub fn keys_with_ingress(preset: model::PadPreset, route: crate::pad_ingress::Route) -> Self {
-        Self { mapper: Mapper::new(Vec::new()), focused: false, menu: None, keys: Some(crate::Mapper::new(preset)), analog: crate::pad_ingress::Ingress::new(route) }
+        Self { mapper: Mapper::new(Vec::new()), focused: false, menu: None, keys: Some(crate::Mapper::new(preset)), hold: crate::Hold::default(), analog: crate::pad_ingress::Ingress::new(route) }
     }
 
     /// The fighter layout on keys with the player's settings.
@@ -152,11 +154,13 @@ impl Driver {
 
     /// One pad state. `seconds` since the last pointer step moves the pointer;
     /// 0 changes only presses.
-    pub fn step(&mut self, input: &InputView, focused: bool, seconds: f32, out: &mut dyn Output) -> Result<(), String> {
+    pub fn step(&mut self, input: &InputView, focused: bool, seconds: f32, now: Instant, out: &mut dyn Output) -> Result<(), String> {
         if let Some(keys) = &mut self.keys {
             self.focused = focused;
             let sample = sample_of(input);
-            Self::deliver_keys(keys.update(Some(&sample), focused), out)?;
+            let transitions = keys.update(Some(&sample), focused);
+            let transitions = if focused { self.hold.apply(transitions, now) } else { self.hold.release().into_iter().chain(transitions).collect() };
+            Self::deliver_keys(transitions, out)?;
             return self.analog.update(&sample, focused && keys.armed(), &mut AnalogOutput(out));
         }
         if !focused {
@@ -186,6 +190,10 @@ impl Driver {
         Ok(())
     }
 
+    pub fn next_release(&self) -> Option<Instant> {
+        self.hold.next_due()
+    }
+
     /// New bindings: what the old ones held is released first.
     pub fn bind(&mut self, bindings: Vec<Binding>, out: &mut dyn Output) -> Result<(), String> {
         if self.keys.is_some() {
@@ -198,7 +206,7 @@ impl Driver {
 
     pub fn release(&mut self, out: &mut dyn Output) -> Result<(), String> {
         if let Some(keys) = &mut self.keys {
-            Self::deliver_keys(keys.update(None, false), out)?;
+            Self::deliver_keys(self.hold.release().into_iter().chain(keys.update(None, false)).collect(), out)?;
             return self.analog.release(&mut AnalogOutput(out));
         }
         Self::deliver(self.mapper.release_all(), out)
@@ -273,21 +281,6 @@ pub enum Window {
     File(PathBuf),
 }
 
-/// Presses written as lines, for a stand-in game.
-struct FileOutput(fs::File);
-
-impl Output for FileOutput {
-    fn key(&mut self, name: &str, down: bool) -> Result<(), String> {
-        writeln!(self.0, "{} {name}", if down { "down" } else { "up" }).map_err(|error| error.to_string())
-    }
-    fn click(&mut self, right: bool, down: bool) -> Result<(), String> {
-        writeln!(self.0, "click {} {}", if right { "right" } else { "left" }, if down { "down" } else { "up" }).map_err(|error| error.to_string())
-    }
-    fn pointer(&mut self, dx: f64, dy: f64) -> Result<(), String> {
-        writeln!(self.0, "pointer {dx:.0} {dy:.0}").map_err(|error| error.to_string())
-    }
-}
-
 /// How often the pointer moves while a stick holds it, and focus is checked.
 const TICK: Duration = Duration::from_millis(10);
 const FOCUS_EVERY: Duration = Duration::from_millis(50);
@@ -329,7 +322,8 @@ pub fn spawn(window: Window, mode: Mode, feed: mpsc::Receiver<Feed>, stop: Arc<A
         let result = (|| -> Result<(), String> {
             while !stop.load(Ordering::Relaxed) {
                 let mut fresh = Vec::new();
-                match feed.recv_timeout(TICK) {
+                let wait = driver.next_release().map_or(TICK, |due| due.saturating_duration_since(Instant::now()).min(TICK));
+                match feed.recv_timeout(wait) {
                     Ok(item) => fresh.push(item),
                     Err(mpsc::RecvTimeoutError::Timeout) => {}
                     Err(mpsc::RecvTimeoutError::Disconnected) => break,
@@ -352,14 +346,14 @@ pub fn spawn(window: Window, mode: Mode, feed: mpsc::Receiver<Feed>, stop: Arc<A
                     match item {
                         Feed::Input(view) => {
                             input = view;
-                            driver.step(&input, is_focused, 0.0, out)?;
+                            driver.step(&input, is_focused, 0.0, Instant::now(), out)?;
                         }
                         Feed::Bindings(bindings) => driver.bind(bindings, out)?,
                     }
                 }
                 let seconds = moved.elapsed().as_secs_f32();
                 moved = Instant::now();
-                driver.step(&input, is_focused, seconds, out)?;
+                driver.step(&input, is_focused, seconds, Instant::now(), out)?;
             }
             Ok(())
         })();
@@ -470,6 +464,7 @@ mod properties {
     #[test]
     fn the_driver_gates_presses_on_focus_and_agrees_with_its_mappers() {
         let mut rng = Rng::new(6);
+        let mut clock = Instant::now();
         let grid = crate::pad_ingress::CursorGrid { x: 10.0, y: 20.0, width: 127.0, height: 254.0, screen_width: 1920, screen_height: 1080 };
         for _ in 0..cases() {
             let kind = match rng.below(4) {
@@ -519,7 +514,7 @@ mod properties {
                 } else {
                     let input = input(&mut rng);
                     let seconds = rng.pick(&[0.0, 0.0, 0.01, 0.1]);
-                    driver.step(&input, focused, seconds, &mut out).unwrap();
+                    driver.step(&input, focused, seconds, { clock += crate::MIN_HOLD; clock }, &mut out).unwrap();
                     match kind {
                         Kind::Keys(_) => {
                             let sample = reference_sample(&input);
@@ -592,3 +587,6 @@ mod properties {
         }
     }
 }
+
+#[cfg(test)]
+mod hold;

@@ -261,3 +261,36 @@ fn the_fighter_mapper_agrees_with_the_layout_reference_over_generated_sdl_events
         }
     }
 }
+
+#[test]
+fn a_press_shorter_than_two_frames_stays_down_two_frames_and_a_longer_one_or_an_opposite_direction_releases_on_time() {
+    let mut rng = Rng::new(7);
+    let start = Instant::now();
+    let actions = [KeyOrClick::Jump, KeyOrClick::Attack, KeyOrClick::Special, KeyOrClick::Left, KeyOrClick::Down, KeyOrClick::CUp];
+    for _ in 0..cases() {
+        let action = rng.pick(&actions);
+        let tap = Duration::from_micros(rng.below(80_000) as u64);
+        let mut hold = Hold::default();
+        let pressed = start + Duration::from_micros(rng.below(1_000_000) as u64);
+        assert_eq!(hold.apply(vec![Transition { action, pressed: true }], pressed), vec![Transition { action, pressed: true }]);
+        let released = pressed + tap;
+        let up = hold.apply(vec![Transition { action, pressed: false }], released);
+        let deadline = pressed + MIN_HOLD;
+        if tap >= MIN_HOLD {
+            assert_eq!(up, vec![Transition { action, pressed: false }], "{action:?} held {tap:?}");
+            assert_eq!(hold.next_due(), None);
+            continue;
+        }
+        assert!(up.is_empty(), "{action:?} released after {tap:?}");
+        assert_eq!(hold.next_due(), Some(deadline));
+        assert!(hold.due(deadline - Duration::from_micros(1)).is_empty(), "{action:?} released before two frames");
+        if let Some(opposite) = action.opposite().filter(|_| rng.chance(50)) {
+            let at = released + (deadline - released) / 2;
+            assert_eq!(hold.apply(vec![Transition { action: opposite, pressed: true }], at), vec![Transition { action, pressed: false }, Transition { action: opposite, pressed: true }]);
+            assert_eq!(hold.next_due(), None);
+            continue;
+        }
+        assert_eq!(hold.due(deadline), vec![Transition { action, pressed: false }], "{action:?} tapped {tap:?}");
+        assert!(hold.due(deadline + MIN_HOLD).is_empty());
+    }
+}
