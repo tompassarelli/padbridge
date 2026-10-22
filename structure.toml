@@ -25,7 +25,7 @@ may_use = ["protocol", "bindings", "leaving", "emit", "focus", "service", "cli"]
 name = "leaving"
 paths = ["model/src/pad.rs", "src/pad_ingress.rs"]
 responsibility = "Smashcraft analog ingress packet and experiment; moves to smashcraft/controller in P2. No new importers."
-may_use = ["protocol", "bindings"]
+may_use = ["protocol", "bindings", "rng"]
 
 [[module]]
 name = "bindings"
@@ -40,22 +40,28 @@ responsibility = "Everything that crosses a process boundary: TCP wire, plug-in 
 may_use = []
 
 [[module]]
-name = "focus"
-paths = ["src/focus/**", "src/focus.rs", "src/wlr.rs", "src/rng.rs"]
-responsibility = "Foreground gate with per-OS adapters and Wayland toplevel tracking."
+name = "rng"
+paths = ["src/rng.rs"]
+responsibility = "Seeded RNG for property tests; test-only."
 may_use = []
+
+[[module]]
+name = "focus"
+paths = ["src/focus/**", "src/focus.rs", "src/wlr.rs"]
+responsibility = "Foreground gate with per-OS adapters and Wayland toplevel tracking."
+may_use = ["rng"]
 
 [[module]]
 name = "emit"
 paths = ["src/emit/**", "src/lib.rs", "src/output.rs", "src/properties.rs"]
 responsibility = "The --emit helper core: SDL sampling, event mapping and key delivery."
-may_use = ["bindings", "protocol", "focus"]
+may_use = ["bindings", "protocol", "focus", "rng"]
 
 [[module]]
 name = "service"
 paths = ["src/service/**", "src/service.rs"]
 responsibility = "Always-on service: discovery, plug-in supervision, TCP interface, Any-map desktop output."
-may_use = ["emit", "focus", "bindings", "protocol"]
+may_use = ["emit", "focus", "bindings", "protocol", "rng"]
 
 [[module]]
 name = "cli"
