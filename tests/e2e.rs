@@ -537,7 +537,7 @@ fn helper_types_the_layout_only_into_the_focused_game() {
         ("button x 1", "button x 0", vec!["v"]),
         ("button b 1", "button b 0", vec!["t"]),
         ("button y 1", "button y 0", vec!["t"]),
-        ("axis lefty -32768", "axis lefty 0", vec![";"]),
+        ("axis lefty -32768", "axis lefty 0", vec!["="]),
         (
             "button rightshoulder 1",
             "button rightshoulder 0",

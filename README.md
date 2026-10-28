@@ -72,7 +72,7 @@ Release binaries for Linux and Windows are attached to every
    - `control`: `a`, `b`, `x`, `y`, `lb`, `rb`, `lt`, `rt`, `start`, `back`,
      `left_stick` (click), `dpad_up|down|left|right`, and each stick direction
      `left_up|down|left|right`, `right_up|down|left|right`. Bind each at most once.
-   - `press`: `{"key": NAME}` (a letter, digit or one of `` ` [ ] ; ' , . - \ ``, `space`, `escape`, `tab`,
+   - `press`: `{"key": NAME}` (a letter, digit or one of `` ` [ ] = ' , . - \ ``, `space`, `escape`, `tab`,
      `enter`, `up`, `down`, `left`, `right`, `f1`..`f24`, `insert`, `delete`,
      `home`, `end`, `pageup`, `pagedown`), `"left_click"`, `"right_click"`, or
      `"pointer"` (the stick moves the mouse pointer).

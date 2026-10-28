@@ -10,33 +10,33 @@ struct Contract {
 
 // Smashcraft's Action order, presets, pad layer and key saves: smashcraft:ts/src/game/input/actions.ts, keyBindings.ts
 // (presetBindings, inputAction, decodeBindings, upgradeDefaults) and padKeys.ts; Y starts the match through its own trigger in shell.ts.
-const ACTIONS: [&str; 18] = ["moveLeft", "moveRight", "moveDown", "moveUp", "jump", "attack", "special", "grab", "leftTrigger",
-    "rightTrigger", "smashLeft", "smashRight", "smashUp", "smashDown", "walk", "lightShield", "shortHop", "exSpecial"];
+const ACTIONS: [&str; 19] = ["moveLeft", "moveRight", "moveDown", "moveUp", "jump", "attack", "special", "grab", "leftTrigger",
+    "rightTrigger", "smashLeft", "smashRight", "smashUp", "smashDown", "walk", "lightShield", "shortHop", "exSpecial", "modX"];
 
 const PAD_LAYER: [(u8, &str); 18] = [(b'C', "attack"), (b'V', "special"), (b'T', "jump"), (b'1', "shortHop"), (b'2', "grab"),
     (b'3', "leftTrigger"), (b'4', "rightTrigger"), (b'5', "lightShield"), (b'6', "walk"), (192, "exSpecial"), (219, "moveLeft"),
-    (221, "moveRight"), (186, "moveUp"), (222, "moveDown"), (188, "smashLeft"), (190, "smashRight"), (189, "smashUp"), (220, "smashDown")];
+    (221, "moveRight"), (187, "moveUp"), (222, "moveDown"), (188, "smashLeft"), (190, "smashRight"), (189, "smashUp"), (220, "smashDown")];
 
 fn code(key: &str) -> u8 {
     match key {
-        "space" => 32, "`" => 192, "[" => 219, "]" => 221, ";" => 186, "'" => 222, "," => 188, "." => 190, "-" => 189, "\\" => 220,
+        "space" => 32, "`" => 192, "[" => 219, "]" => 221, "=" => 187, ";" => 186, "'" => 222, "," => 188, "." => 190, "-" => 189, "\\" => 220,
         _ => key.to_ascii_uppercase().as_bytes()[0],
     }
 }
 
 fn esdf() -> Vec<[u8; 2]> {
     vec![[b'S', 0], [b'F', 0], [b'D', 0], [b'E', 0], [32, b'8'], [b'N', 0], [b'U', 0], [b'O', 0], [b'A', 0], [b'7', 0],
-        [b'B', 0], [b'M', 0], [b'J', 0], [b'H', 0], [b'P', 0], [b'0', 0], [b'I', 0], [b'9', 0]]
+        [b'B', 0], [b'M', 0], [b'J', 0], [b'H', 0], [b'P', 0], [b'0', 0], [b'I', 0], [b'9', 0], [b';', 0]]
 }
 
 fn hitbox() -> Vec<[u8; 2]> {
     vec![[b'W', 0], [b'R', 0], [b'E', 0], [32, 0], [b'8', 0], [b'N', 0], [b'U', 0], [b'O', 0], [b'Q', 0], [b'7', 0],
-        [b'B', 0], [b'M', 0], [b'J', 0], [b'H', 0], [b'P', 0], [b'0', 0], [b'I', 0], [b'9', 0]]
+        [b'B', 0], [b'M', 0], [b'J', 0], [b'H', 0], [b'P', 0], [b'0', 0], [b'I', 0], [b'9', 0], [b';', 0]]
 }
 
 fn custom() -> Vec<[u8; 2]> {
     vec![[b'W', 0], [b'R', 0], [b'E', 0], [32, 0], [b'Z', b'9'], [b'N', 0], [b'U', 0], [b'O', 0], [b'Q', 0], [b'8', b'G'],
-        [b'B', 191], [b'M', 0], [b'J', 0], [b'H', 0], [b'P', 0], [b'A', 0], [b'I', 0], [b'0', b'X']]
+        [b'B', 191], [b'M', 0], [b'J', 0], [b'H', 0], [b'P', 0], [b'A', 0], [b'I', 0], [b'0', b'X'], [b';', 0]]
 }
 
 fn saved(file: &str) -> Vec<[u8; 2]> {

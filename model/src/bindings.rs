@@ -81,7 +81,7 @@ pub mod pad_key {
     pub const EX_SPECIAL: char = '`';
     pub const LEFT: char = '[';
     pub const RIGHT: char = ']';
-    pub const UP: char = ';';
+    pub const UP: char = '=';
     pub const DOWN: char = '\'';
     pub const C_LEFT: char = ',';
     pub const C_RIGHT: char = '.';
