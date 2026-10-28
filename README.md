@@ -236,8 +236,8 @@ once.
 | B | Special V | Special V | Grab 2 |
 | X | Jump T | Grab 2 | Special V |
 | Y | Jump T | Jump T | Jump T |
-| RB | Grab 2 | Jump T | EX special ` |
-| LB | EX special ` | EX special ` | Short hop 1 (even held) |
+| RB | Grab 2 | Jump T | Strong ` |
+| LB | Strong ` | Strong ` | Short hop 1 (even held) |
 | LT | Shield 3 | Shield 3 | Shield 3 |
 | RT | Shield 4 (right trigger) | Shield 4 (right trigger) | Shield 4 (right trigger) |
 | Start | Pause Y | Pause Y | Pause Y |
@@ -247,10 +247,9 @@ once.
 
 **melee**, the default new players get, is the GameCube layout by function:
 A attacks, B specials, X and Y jump (tap for a short hop, hold for a full
-hop), Z (RB) grabs, either trigger shields (RT on its own key, so pressing it while holding LT is a fresh press) and LB is the EX special. **z-jump** is the common Melee swap: Z (RB) jumps, which frees a face
+hop), Z (RB) grabs, either trigger shields (RT on its own key, so pressing it while holding LT is a fresh press) and LB is Strong. **z-jump** is the common Melee swap: Z (RB) jumps, which frees a face
 button, X, for grab. **tom** keeps X special and B grab, makes LB a dedicated
-short hop and Y an ordinary jump, and makes RB the EX special: RB with a
-direction casts that special's EX form. No preset has a tilt/walk
+short hop and Y an ordinary jump, and makes RB Strong. No preset has a tilt/walk
 modifier; it remains a remap (`tilt`). In every preset a
 shield press during jump squat comes out as an air dodge on the first
 airborne frame (a wavedash).
@@ -267,7 +266,7 @@ previous remaps; the service saves them with the other settings in
 `x`, `y`, `lb`, `rb`, `lt`, `rt` and `left_stick`, named by position as in
 layout files (on a GameCube pad after its letter swap: `x` is the printed B);
 moves are `attack`, `special`, `jump`, `grab`, `shield`, `tilt`, `short_hop`,
-`ex_special` and `none` (unbound). A trigger remapped to shield keeps its full or light
+`strong` and `none` (unbound). A trigger remapped to shield keeps its full or light
 choice; shield on a button is full shield. `padbridge --remaps
 lb=grab,rb=none` takes the same remaps, and `model::ControllerSettings::bindings`
 gives the remapped layout a window shows.

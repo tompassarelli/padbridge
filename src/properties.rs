@@ -27,9 +27,9 @@ fn reference_buttons(config: &Config) -> Vec<(Pad, KeyOrClick)> {
         }
     };
     let mut table: Vec<(Pad, KeyOrClick)> = match config.preset {
-        PadPreset::Melee => vec![(Pad::A, Attack), (Pad::B, Special), (Pad::X, Jump), (Pad::Y, Jump), (Pad::Rb, Grab), (Pad::Lb, ExSpecial)],
-        PadPreset::ZJump => vec![(Pad::A, Attack), (Pad::B, Special), (Pad::X, Grab), (Pad::Y, Jump), (Pad::Rb, Jump), (Pad::Lb, ExSpecial)],
-        PadPreset::Tom => vec![(Pad::A, Attack), (Pad::B, Grab), (Pad::X, Special), (Pad::Y, Jump), (Pad::Lb, ShortHop), (Pad::Rb, ExSpecial)],
+        PadPreset::Melee => vec![(Pad::A, Attack), (Pad::B, Special), (Pad::X, Jump), (Pad::Y, Jump), (Pad::Rb, Grab), (Pad::Lb, Strong)],
+        PadPreset::ZJump => vec![(Pad::A, Attack), (Pad::B, Special), (Pad::X, Grab), (Pad::Y, Jump), (Pad::Rb, Jump), (Pad::Lb, Strong)],
+        PadPreset::Tom => vec![(Pad::A, Attack), (Pad::B, Grab), (Pad::X, Special), (Pad::Y, Jump), (Pad::Lb, ShortHop), (Pad::Rb, Strong)],
         PadPreset::Script => vec![(Pad::A, Attack), (Pad::X, Special), (Pad::B, Jump), (Pad::Y, Jump), (Pad::LeftStick, ShortHop), (Pad::Rb, Grab), (Pad::Lb, Walk)],
     };
     table.extend([(Pad::Lt, shield(Pad::Lt)), (Pad::Rt, shield(Pad::Rt)), (Pad::Start, Start)]);
@@ -47,7 +47,7 @@ fn reference_buttons(config: &Config) -> Vec<(Pad, KeyOrClick)> {
         Move::Shield => shield(control),
         Move::Tilt => Walk,
         Move::ShortHop => ShortHop,
-        Move::ExSpecial => ExSpecial,
+        Move::Strong => Strong,
         Move::None => return None,
     }))));
     table
@@ -239,7 +239,7 @@ fn the_fighter_mapper_agrees_with_the_layout_reference_over_generated_sdl_events
 
     // The keys pressed are the keys the window shows for the same controls.
     let mut keys = BTreeSet::new();
-    let all = [KeyOrClick::Attack, KeyOrClick::Special, KeyOrClick::Jump, KeyOrClick::ShortHop, KeyOrClick::Grab, KeyOrClick::Shield, KeyOrClick::RightShield, KeyOrClick::LightShield, KeyOrClick::Walk, KeyOrClick::ExSpecial,
+    let all = [KeyOrClick::Attack, KeyOrClick::Special, KeyOrClick::Jump, KeyOrClick::ShortHop, KeyOrClick::Grab, KeyOrClick::Shield, KeyOrClick::RightShield, KeyOrClick::LightShield, KeyOrClick::Walk, KeyOrClick::Strong,
         KeyOrClick::Start, KeyOrClick::Left, KeyOrClick::Right, KeyOrClick::Down, KeyOrClick::Up, KeyOrClick::CLeft, KeyOrClick::CRight, KeyOrClick::CUp, KeyOrClick::CDown];
     for action in all {
         assert!(keys.insert(action.key()), "{action:?} shares its key");

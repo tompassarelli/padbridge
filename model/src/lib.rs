@@ -227,7 +227,7 @@ mod properties {
                             Move::Grab => preset_of("Grab"),
                             Move::Tilt => preset_of("Tilt"),
                             Move::ShortHop => preset_of("Short hop"),
-                            Move::ExSpecial => preset_of("EX special"),
+                            Move::Strong => preset_of("Strong"),
                             Move::Shield | Move::None => None,
                         };
                         if let Some(press) = expected {

@@ -78,7 +78,7 @@ pub mod pad_key {
     pub const RIGHT_SHIELD: char = '4';
     pub const LIGHT_SHIELD: char = '5';
     pub const TILT: char = '6';
-    pub const EX_SPECIAL: char = '`';
+    pub const STRONG: char = '`';
     pub const LEFT: char = '[';
     pub const RIGHT: char = ']';
     pub const UP: char = '=';
@@ -89,7 +89,7 @@ pub mod pad_key {
     pub const C_DOWN: char = '\\';
     pub const PAUSE: char = 'y';
     /// The punctuation among them, which `Press::Key` also names by the character.
-    pub const PUNCTUATION: [char; 9] = [EX_SPECIAL, LEFT, RIGHT, UP, DOWN, C_LEFT, C_RIGHT, C_UP, C_DOWN];
+    pub const PUNCTUATION: [char; 9] = [STRONG, LEFT, RIGHT, UP, DOWN, C_LEFT, C_RIGHT, C_UP, C_DOWN];
 }
 
 fn pad(c: char) -> Press {
@@ -143,17 +143,17 @@ pub enum Move {
     Shield,
     Tilt,
     ShortHop,
-    ExSpecial,
+    Strong,
     None,
 }
 
 impl Move {
-    pub const ALL: [Self; 9] = [Self::Attack, Self::Special, Self::Jump, Self::Grab, Self::Shield, Self::Tilt, Self::ShortHop, Self::ExSpecial, Self::None];
+    pub const ALL: [Self; 9] = [Self::Attack, Self::Special, Self::Jump, Self::Grab, Self::Shield, Self::Tilt, Self::ShortHop, Self::Strong, Self::None];
 
     pub fn name(self) -> &'static str {
         match self {
             Self::Attack => "attack", Self::Special => "special", Self::Jump => "jump", Self::Grab => "grab",
-            Self::Shield => "shield", Self::Tilt => "tilt", Self::ShortHop => "short_hop", Self::ExSpecial => "ex_special", Self::None => "none",
+            Self::Shield => "shield", Self::Tilt => "tilt", Self::ShortHop => "short_hop", Self::Strong => "strong", Self::None => "none",
         }
     }
 
@@ -216,7 +216,7 @@ pub fn remap(bindings: Vec<Binding>, remaps: &Remaps, triggers: TriggerShields) 
         Move::Shield => shield(control, triggers),
         Move::Tilt => bind(control, "Tilt", pad(pad_key::TILT)),
         Move::ShortHop => bind(control, "Short hop", pad(pad_key::SHORT_HOP)),
-        Move::ExSpecial => bind(control, "EX special", pad(pad_key::EX_SPECIAL)),
+        Move::Strong => bind(control, "Strong", pad(pad_key::STRONG)),
         Move::None => return None,
     }))).collect()
 }
@@ -270,15 +270,15 @@ pub fn fighter_bindings_with(preset: PadPreset, triggers: TriggerShields, right_
     let buttons = match preset {
         PadPreset::Melee => vec![
             bind(A, "Attack", attack), bind(B, "Special", special), bind(X, "Jump", jump.clone()), bind(Y, "Jump", jump),
-            bind(Rb, "Grab", grab), bind(Lb, "EX special", pad(pad_key::EX_SPECIAL)), shield(Lt, triggers), shield(Rt, triggers),
+            bind(Rb, "Grab", grab), bind(Lb, "Strong", pad(pad_key::STRONG)), shield(Lt, triggers), shield(Rt, triggers),
         ],
         PadPreset::ZJump => vec![
             bind(A, "Attack", attack), bind(B, "Special", special), bind(X, "Grab", grab), bind(Y, "Jump", jump.clone()),
-            bind(Rb, "Jump", jump), bind(Lb, "EX special", pad(pad_key::EX_SPECIAL)), shield(Lt, triggers), shield(Rt, triggers),
+            bind(Rb, "Jump", jump), bind(Lb, "Strong", pad(pad_key::STRONG)), shield(Lt, triggers), shield(Rt, triggers),
         ],
         PadPreset::Tom => vec![
             bind(A, "Attack", attack), bind(B, "Grab", grab), bind(X, "Special", special), bind(Y, "Jump", jump),
-            bind(Lb, "Short hop", short_hop), bind(Rb, "EX special", pad(pad_key::EX_SPECIAL)), shield(Lt, triggers), shield(Rt, triggers),
+            bind(Lb, "Short hop", short_hop), bind(Rb, "Strong", pad(pad_key::STRONG)), shield(Lt, triggers), shield(Rt, triggers),
         ],
         PadPreset::Script => vec![
             bind(A, "Attack", attack), bind(X, "Special", special), bind(B, "Jump", jump.clone()), bind(Y, "Jump", jump),

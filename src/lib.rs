@@ -69,7 +69,7 @@ pub enum KeyOrClick {
     RightShield,
     LightShield,
     Walk,
-    ExSpecial,
+    Strong,
     Start,
     Left,
     Right,
@@ -82,7 +82,7 @@ pub enum KeyOrClick {
 }
 
 impl KeyOrClick {
-    const BUTTONS: [Self; 11] = [Self::Attack, Self::Special, Self::Jump, Self::ShortHop, Self::Grab, Self::Shield, Self::RightShield, Self::LightShield, Self::Walk, Self::ExSpecial, Self::Start];
+    const BUTTONS: [Self; 11] = [Self::Attack, Self::Special, Self::Jump, Self::ShortHop, Self::Grab, Self::Shield, Self::RightShield, Self::LightShield, Self::Walk, Self::Strong, Self::Start];
 
     fn of_press(press: &model::Press) -> Option<Self> {
         let model::Press::Key(name) = press else { return None };
@@ -115,7 +115,7 @@ impl KeyOrClick {
             Self::RightShield => pad_key::RIGHT_SHIELD,
             Self::LightShield => pad_key::LIGHT_SHIELD,
             Self::Walk => pad_key::TILT,
-            Self::ExSpecial => pad_key::EX_SPECIAL,
+            Self::Strong => pad_key::STRONG,
             Self::Start => pad_key::PAUSE,
             Self::Left => pad_key::LEFT,
             Self::Right => pad_key::RIGHT,

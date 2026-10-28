@@ -11,10 +11,10 @@ struct Contract {
 // Smashcraft's Action order, presets, pad layer and key saves: smashcraft:ts/src/game/input/actions.ts, keyBindings.ts
 // (presetBindings, inputAction, decodeBindings, upgradeDefaults) and padKeys.ts; Y starts the match through its own trigger in shell.ts.
 const ACTIONS: [&str; 19] = ["moveLeft", "moveRight", "moveDown", "moveUp", "jump", "attack", "special", "grab", "leftTrigger",
-    "rightTrigger", "smashLeft", "smashRight", "smashUp", "smashDown", "walk", "lightShield", "shortHop", "exSpecial", "modX"];
+    "rightTrigger", "smashLeft", "smashRight", "smashUp", "smashDown", "walk", "lightShield", "shortHop", "strong", "modX"];
 
 const PAD_LAYER: [(u8, &str); 18] = [(b'C', "attack"), (b'V', "special"), (b'T', "jump"), (b'1', "shortHop"), (b'2', "grab"),
-    (b'3', "leftTrigger"), (b'4', "rightTrigger"), (b'5', "lightShield"), (b'6', "walk"), (192, "exSpecial"), (219, "moveLeft"),
+    (b'3', "leftTrigger"), (b'4', "rightTrigger"), (b'5', "lightShield"), (b'6', "walk"), (192, "strong"), (219, "moveLeft"),
     (221, "moveRight"), (187, "moveUp"), (222, "moveDown"), (188, "smashLeft"), (190, "smashRight"), (189, "smashUp"), (220, "smashDown")];
 
 fn code(key: &str) -> u8 {
@@ -67,7 +67,7 @@ fn free(keys: &[[u8; 2]], candidates: &[u8]) -> bool {
 
 fn fill_second_slots(keys: &mut [[u8; 2]], version: &str) {
     if keys[action("lightShield")][1] == 0 && free(keys, b"T") { keys[action("lightShield")][1] = b'T'; }
-    if keys[action("exSpecial")][1] == 0 && free(keys, b"X") { keys[action("exSpecial")][1] = b'X'; }
+    if keys[action("strong")][1] == 0 && free(keys, b"X") { keys[action("strong")][1] = b'X'; }
     if keys[action("rightTrigger")][1] == 0 && free(keys, b"G") { keys[action("rightTrigger")][1] = b'G'; }
     if keys[action("shortHop")][0] == 0 && free(keys, b"Z") { keys[action("shortHop")][0] = b'Z'; }
     upgrade_renamed_keys(keys, version);
