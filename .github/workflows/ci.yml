@@ -22,7 +22,7 @@ jobs:
   code-health:
     if: github.event_name != 'workflow_dispatch' || github.ref != 'refs/heads/main'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
         with:
@@ -32,6 +32,8 @@ jobs:
           bun-version: 1.3.13
       - run: npm i -g @ast-grep/cli@0.42.1
       - run: git clone --depth 1 https://github.com/tompassarelli/north "$RUNNER_TEMP/north"
+      - run: cargo build --release --locked --bin north && echo "CODE_HEALTH_NORTH_BIN=$PWD/target/release/north" >> "$GITHUB_ENV"
+        working-directory: ${{ runner.temp }}/north
       - env:
           EVENT: ${{ github.event_name }}
           REF: ${{ github.ref }}
