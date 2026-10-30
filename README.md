@@ -285,6 +285,12 @@ specials, X and Y jump, Z grabs and L and R shield. `--list` prints each pad's
 [Dolphin documents](https://dolphin-emu.org/docs/guides/how-use-official-gc-controller-adapter-wii-u/).
 GameCube identity applies to the SDL helper (`padbridge --watch-seconds`);
 the service reads Linux evdev pads and does not apply it.
+[Wisp's native window](https://github.com/tompassarelli/wisp/blob/main/docs/native-window-plan.md)
+reads pads through the same SDL3 gamepad API and takes the melee layout from
+`padbridge-model` (`pad_bindings`, with `PadKind::GameCube` for what SDL
+reports as `SDL_GAMEPAD_TYPE_GAMECUBE`), so a pad plays the same there as in
+Warcraft. The window presses only the buttons Smashcraft's page has (not Strong
+or short hop).
 
 Either trigger can instead light shield: choose Full shield or Light shield for
 each trigger in a window, or use `--left-trigger full|light` and
