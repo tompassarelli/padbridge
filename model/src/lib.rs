@@ -117,7 +117,7 @@ mod properties {
                         && !(s.profile == Profile::Map && s.session.is_none())
                         && s.output.running && s.output.ready && s.output.focused;
                     [
-                        if s.pad.is_some() { Light::Green } else { Light::Red },
+                        if s.pad.is_some() { Light::Green } else { Light::Off },
                         if s.game.as_ref().is_some_and(|g| g.window) { Light::Green } else { Light::Amber },
                         if session_ready { Light::Green } else { Light::Amber },
                     ]
@@ -126,19 +126,18 @@ mod properties {
             assert_eq!(lights, expected, "{link:?} {s:?}");
             let problem = if link == Link::Connected { s.problem.clone() } else { None };
             assert_eq!(v.problem, problem);
-            let overall = if problem.is_some() || lights.contains(&Light::Red) {
+            let counted = if link == Link::Connected && s.pad.is_none() { &lights[1..] } else { &lights[..] };
+            let overall = if problem.is_some() || counted.contains(&Light::Red) {
                 Light::Red
-            } else if lights.contains(&Light::Amber) {
+            } else if counted.contains(&Light::Amber) {
                 Light::Amber
-            } else if lights.contains(&Light::Off) {
+            } else if counted.contains(&Light::Off) {
                 Light::Off
             } else {
                 Light::Green
             };
             assert_eq!(v.overall, overall, "{link:?} {s:?}");
-            if s.profile == Profile::Map && let Some(title) = &s.map {
-                assert_eq!(&v.rows[2].label, title);
-            }
+            assert_eq!(v.rows[2].label, if s.profile == Profile::Off { "Controller output" } else { "Match" });
             for r in &v.rows {
                 let t = format!("{} {}", r.label, r.text).to_lowercase();
                 for word in ["epoch", "journal", "x11", "slot", "pid", "helper", "socket", "evdev", "service", "4242"] {

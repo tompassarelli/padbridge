@@ -13,7 +13,7 @@ pub enum Link {
     Connected,
 }
 
-/// Status light colours. `Off` is grey: not known while the service is off.
+/// Status light colours. `Off` is grey: nothing to report, as with the service off or no controller (keyboard play needs none).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Light {
@@ -46,7 +46,7 @@ fn row(label: &str, text: impl Into<String>, light: Light) -> Row {
     }
 }
 
-const CLICK_GAME: &str = "Click the Warcraft III window to use your controller.";
+const CLICK_GAME: &str = "Click the Warcraft III window to play.";
 
 fn phase_text(session: &Session) -> String {
     match session.phase {
@@ -62,19 +62,15 @@ fn phase_text(session: &Session) -> String {
 }
 
 fn session_row(s: &Snapshot) -> Row {
-    let label = match s.profile {
-        Profile::Map => s.map.as_deref().unwrap_or("Map"),
-        Profile::AnyMap => "Map",
-        Profile::Off => "Controller output",
-    };
+    let label = session_label(s);
     if s.profile == Profile::Off {
         return row(label, "Off: your controller doesn't press anything", Light::Amber);
     }
     if s.game.is_none() {
-        return row(label, "Waiting for Warcraft III", Light::Amber);
+        return row(label, "No match running", Light::Amber);
     }
     let (doing, followed) = match (s.profile, &s.session) {
-        (Profile::Map, None) => return row(label, format!("Waiting for {}", s.map.as_deref().unwrap_or("the map")), Light::Amber),
+        (Profile::Map, None) => return row(label, format!("No {} match yet", s.map.as_deref().unwrap_or("map")), Light::Amber),
         (Profile::Map, Some(session)) => (phase_text(session), true),
         _ => ("Your controller works in Warcraft III".to_owned(), false),
     };
@@ -92,10 +88,10 @@ fn session_row(s: &Snapshot) -> Row {
     row(label, doing, Light::Green)
 }
 
-fn profile_label(s: &Snapshot) -> &str {
-    match (s.profile, &s.map) {
-        (Profile::Map, Some(title)) => title,
-        (profile, _) => profile.label(),
+fn session_label(s: &Snapshot) -> &'static str {
+    match s.profile {
+        Profile::Off => "Controller output",
+        Profile::Map | Profile::AnyMap => "Match",
     }
 }
 
@@ -105,20 +101,20 @@ pub fn view(link: Link, s: &Snapshot) -> View {
         Link::Off => [
             row("Controller", "Controller support is off", Light::Off),
             row("Warcraft III", "Not checked", Light::Off),
-            row(profile_label(s), "Not checked", Light::Off),
+            row(session_label(s), "Not checked", Light::Off),
         ],
         Link::Starting => [
             row("Controller", "Turning on controller support…", Light::Amber),
             row("Warcraft III", "Checking…", Light::Amber),
-            row(profile_label(s), "Checking…", Light::Amber),
+            row(session_label(s), "Checking…", Light::Amber),
         ],
         Link::Connected => [
             match &s.pad {
                 Some(pad) => row("Controller", format!("{} connected", pad.name), Light::Green),
                 None => row(
                     "Controller",
-                    "No controller found. Plug one in or switch it on.",
-                    Light::Red,
+                    "No controller connected. Keyboard play needs none.",
+                    Light::Off,
                 ),
             },
             match &s.game {
@@ -130,7 +126,9 @@ pub fn view(link: Link, s: &Snapshot) -> View {
         ],
     };
     let problem = if link == Link::Connected { s.problem.clone() } else { None };
-    let worst = rows.iter().map(|r| r.light).max().unwrap_or(Light::Off);
+    let keyboard_only = link == Link::Connected && s.pad.is_none();
+    let counted = if keyboard_only { &rows[1..] } else { &rows[..] };
+    let worst = counted.iter().map(|r| r.light).max().unwrap_or(Light::Off);
     let overall = if problem.is_some() { Light::Red } else { worst };
     View { rows, overall, problem }
 }
