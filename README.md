@@ -211,13 +211,13 @@ Three presets choose the buttons; sticks and Start are the same in all of them.
 `padbridge` and plug-in helpers accept `--preset melee|z-jump|tom`, and
 `--list` prints them.
 
-The keys are the map's pad layer (smashcraft `contracts/controller.json`,
+The keys are the map's pad layer (makgora `contracts/controller.json`,
 `padKeys`): keys no keyboard preset binds, which the map reads as these actions
 whatever keyboard preset the player chose, unless the player bound that key
 themselves.
 
 The service and `padbridge --emit` hold every fighter key they press down for at least two 60 Hz
-frames (33.3 ms, `MIN_HOLD`): Smashcraft reads held keys once per game
+frames (33.3 ms, `MIN_HOLD`): Mak'gora reads held keys once per game
 callback, and on Battle.net those come in bursts every 25 ms turn with
 0–12 ms of jitter, so a shorter tap can fall between two bursts and never
 be seen. Two frames is the longest hold that keeps a tap a short hop on
@@ -289,7 +289,7 @@ the service reads Linux evdev pads and does not apply it.
 reads pads through the same SDL3 gamepad API and takes the melee layout from
 `padbridge-model` (`pad_bindings`, with `PadKind::GameCube` for what SDL
 reports as `SDL_GAMEPAD_TYPE_GAMECUBE`), so a pad plays the same there as in
-Warcraft. The window presses only the buttons Smashcraft's page has (not Strong
+Warcraft. The window presses only the buttons Mak'gora's page has (not Strong
 or short hop).
 
 Either trigger can instead light shield: choose Full shield or Light shield for
@@ -300,7 +300,7 @@ pressure 77; full shield presses 3 on LT and 4 on RT and requests 255.
 The model's preset bindings (`model::fighter_bindings_with`, `model::pad_bindings`,
 `ControllerSettings::bindings`) are the only binding list: the service presses
 them and windows show them. contract/bindings.json maps each action label to the
-Smashcraft action its key must reach, and the tests check that through the map's pad layer under its
+Mak'gora action its key must reach, and the tests check that through the map's pad layer under its
 ESDF, Hitbox and Custom presets and a copy of a saved binding set (contract/tom-saved-bindings.pld).
 
 Tap jump is off by default. A window can enable it, or

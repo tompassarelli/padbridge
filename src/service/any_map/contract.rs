@@ -4,11 +4,11 @@ use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(serde::Deserialize)]
 struct Contract {
-    /// The model's action label to the Smashcraft action its key must reach.
+    /// The model's action label to the Mak'gora action its key must reach.
     map_actions: BTreeMap<String, String>,
 }
 
-// Smashcraft's Action order, presets, pad layer and key saves: smashcraft:ts/src/game/input/actions.ts, keyBindings.ts
+// Mak'gora's Action order, presets, pad layer and key saves: makgora:ts/src/game/input/actions.ts, keyBindings.ts
 // (presetBindings, inputAction, decodeBindings, upgradeDefaults) and padKeys.ts; Y starts the match through its own trigger in shell.ts.
 const ACTIONS: [&str; 19] = ["moveLeft", "moveRight", "moveDown", "moveUp", "jump", "attack", "special", "grab", "leftTrigger",
     "rightTrigger", "smashLeft", "smashRight", "smashUp", "smashDown", "walk", "lightShield", "shortHop", "strong", "modX"];

@@ -24,7 +24,7 @@ may_use = ["protocol", "bindings", "leaving", "emit", "focus", "service", "cli"]
 [[module]]
 name = "leaving"
 paths = ["model/src/pad.rs", "src/pad_ingress.rs"]
-responsibility = "Smashcraft analog ingress packet and experiment; moves to smashcraft/controller in P2. No new importers."
+responsibility = "Mak'gora analog ingress packet and experiment; moves to makgora/controller in P2. No new importers."
 may_use = ["protocol", "bindings", "rng"]
 
 [[module]]

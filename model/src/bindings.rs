@@ -66,7 +66,7 @@ fn key(name: &str) -> Press {
     Press::Key(name.to_owned())
 }
 
-/// Smashcraft's pad layer (`padKeys` in its `contracts/controller.json`): the
+/// Mak'gora's pad layer (`padKeys` in its `contracts/controller.json`): the
 /// keys each fighter action is pressed on, none of them in a keyboard preset.
 pub mod pad_key {
     pub const ATTACK: char = 'c';
