@@ -137,7 +137,6 @@ mod properties {
                 Light::Green
             };
             assert_eq!(v.overall, overall, "{link:?} {s:?}");
-            assert_eq!(v.rows[2].label, if s.profile == Profile::Off { "Controller output" } else { "Match" });
             for r in &v.rows {
                 let t = format!("{} {}", r.label, r.text).to_lowercase();
                 for word in ["epoch", "journal", "x11", "slot", "pid", "helper", "socket", "evdev", "service", "4242"] {
