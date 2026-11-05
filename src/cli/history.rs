@@ -64,6 +64,7 @@ pub fn history_event(
     println!("event\t{id}\t{capture_ns}\t{dequeue_ns}\t\t{control}\t{value}\t\t\t{disposition}");
 }
 
+#[allow(clippy::too_many_arguments, reason = "one argument per column of the history row it prints")]
 pub fn history_transition(
     id: u64,
     capture_ns: u64,

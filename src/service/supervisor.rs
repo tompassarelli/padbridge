@@ -42,11 +42,10 @@ impl Supervisor {
                     "Warcraft III's window changed".into()
                 });
             }
-            if let Some(session) = session {
-                if session.key != serving.session {
+            if let Some(session) = session
+                && session.key != serving.session {
                     return Decision::Stop(format!("new map session ({})", session.summary));
                 }
-            }
             if pad.is_some() && serving.pad_lost_since.is_some_and(|since| now.duration_since(since) >= PAD_SWAP) {
                 return Decision::Stop("the controller came back as another device".into());
             }
@@ -129,7 +128,8 @@ mod properties {
         for _ in 0..cases() {
             let mut supervisor = Supervisor::default();
             let mut discovery = PadDiscovery::default();
-            let (mut serving, mut retry_at): (Option<(Game, String, Option<Duration>)>, Option<Duration>) = (None, None);
+            let mut serving: Option<(Game, String, Option<Duration>)> = None;
+            let mut retry_at: Option<Duration> = None;
             let (mut known, mut missing_since): (Option<Pad>, Option<Duration>) = (None, None);
             let mut clock = Duration::ZERO;
             let mut kept_target = None;

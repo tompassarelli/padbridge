@@ -35,11 +35,9 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
             interface,
             version,
         } = event
-        {
-            if interface == "zwlr_foreign_toplevel_manager_v1" {
+            && interface == "zwlr_foreign_toplevel_manager_v1" {
                 state.manager = Some(registry.bind(name, version.min(3), qh, ()));
             }
-        }
     }
 }
 

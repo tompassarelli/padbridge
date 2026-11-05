@@ -16,11 +16,10 @@ struct State {
 
 impl Dispatch<wl_registry::WlRegistry, ()> for State {
     fn event(state: &mut Self, registry: &wl_registry::WlRegistry, event: wl_registry::Event, _: &(), _: &Connection, qh: &QueueHandle<Self>) {
-        if let wl_registry::Event::Global { name, interface, version } = event {
-            if interface == "zwlr_virtual_pointer_manager_v1" {
+        if let wl_registry::Event::Global { name, interface, version } = event
+            && interface == "zwlr_virtual_pointer_manager_v1" {
                 state.manager = Some(registry.bind(name, version.min(1), qh, ()));
             }
-        }
     }
 }
 

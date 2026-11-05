@@ -55,6 +55,9 @@ impl Default for Config {
     }
 }
 
+/// The running Any map output: its window, process id, kind, and the stop and done flags of its threads.
+type AnyMapRun = (any_map::Window, u32, any_map::Kind, Arc<AtomicBool>, Arc<AtomicBool>);
+
 /// The lock one service holds for its display (or stand-in game), so a
 /// second copy never runs a second helper typing into the same game.
 pub fn lock_path(config: &Config) -> PathBuf {
@@ -84,7 +87,7 @@ pub fn run(config: &Config, profile: &mut dyn Profile, stop: &AtomicBool, mut re
     let mut bindings = config.layout.clone().unwrap_or_else(any_map::default_bindings);
     // The running Any map output's feed; the pad watcher sends every state to it.
     let feed: Arc<Mutex<Option<mpsc::Sender<any_map::Feed>>>> = Arc::new(Mutex::new(None));
-    let mut any_map_running: Option<(any_map::Window, u32, any_map::Kind, Arc<AtomicBool>, Arc<AtomicBool>)> = None;
+    let mut any_map_running: Option<AnyMapRun> = None;
     let mut watching: Option<(PathBuf, Arc<AtomicBool>)> = None;
     let mut discovery = PadDiscovery::default();
     let mut supervisor = Supervisor::default();
@@ -168,11 +171,10 @@ pub fn run(config: &Config, profile: &mut dyn Profile, stop: &AtomicBool, mut re
             }
         }
         let session = game.as_ref().and_then(|game| profile.session(game));
-        if session != status.session {
-            if let Some(session) = &session {
+        if session != status.session
+            && let Some(session) = &session {
                 eprintln!("service: session {} ({})", session.key, session.summary);
             }
-        }
         if let Some(interface) = &interface {
             for message in interface.commands() {
                 match message {
@@ -194,11 +196,10 @@ pub fn run(config: &Config, profile: &mut dyn Profile, stop: &AtomicBool, mut re
                     }
                     model::ClientMessage::Bindings(new) => {
                         eprintln!("service: {} Any map bindings received", new.len());
-                        if any_map_running.as_ref().is_some_and(|(_, _, kind, ..)| *kind == any_map::Kind::AnyMap) {
-                            if let Some(send) = feed.lock().unwrap().as_ref() {
+                        if any_map_running.as_ref().is_some_and(|(_, _, kind, ..)| *kind == any_map::Kind::AnyMap)
+                            && let Some(send) = feed.lock().unwrap().as_ref() {
                                 let _ = send.send(any_map::Feed::Bindings(new.clone()));
                             }
-                        }
                         bindings = new;
                     }
                 }
@@ -206,8 +207,8 @@ pub fn run(config: &Config, profile: &mut dyn Profile, stop: &AtomicBool, mut re
         }
         // The pad's live state, for windows and the Any map output; a new
         // watcher follows a new device.
-        if let Some(pad) = &pad {
-            if watching.as_ref().is_none_or(|(device, alive)| *device != pad.device || !alive.load(Ordering::Relaxed)) {
+        if let Some(pad) = &pad
+            && watching.as_ref().is_none_or(|(device, alive)| *device != pad.device || !alive.load(Ordering::Relaxed)) {
                 if let Some((_, alive)) = watching.take() {
                     alive.store(false, Ordering::Relaxed);
                 }
@@ -228,20 +229,18 @@ pub fn run(config: &Config, profile: &mut dyn Profile, stop: &AtomicBool, mut re
                 });
                 watching = Some((pad.device.clone(), alive));
             }
-        }
         let resolved = choice.resolve(session.is_some());
         // Another profile than this one presses nothing through its helper.
         let session = if resolved == model::Profile::Map { session } else { None };
         // A session on keys needs no helper: the pad's keys output serves it.
         let keys = resolved == model::Profile::Map && session.is_some() && profile.keys();
-        if resolved != model::Profile::Map || keys {
-            if let Some(current) = running.take() {
+        if (resolved != model::Profile::Map || keys)
+            && let Some(current) = running.take() {
                 eprintln!("service: stopping the helper: {}", if keys { "the session plays on keys".to_owned() } else { format!("profile {resolved:?}") });
                 stop_child(current);
                 status.helper = None;
                 supervisor = Supervisor::default();
             }
-        }
         // Pad output into the game's window while it has focus: the Any map
         // profile, or the pointer in the map's menus (never during play).
         let menu = resolved == model::Profile::Map && profile.pointer_menu()
