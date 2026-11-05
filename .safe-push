@@ -1,0 +1,6 @@
+[landing]
+	capacity = north capacity host run --class heavy --owner land-check --priority tom-ask --timeout-seconds 3600 --
+[land]
+	inferred = false
+	after = "** :: nix develop --offline --no-update-lock-file -c cargo test --locked --offline"
+	after = "** :: nix develop --offline --no-update-lock-file -c cargo clippy --all-targets --locked --offline -- -D warnings"
