@@ -172,8 +172,7 @@ cargo run --locked -- --watch-seconds 20
 cargo run --locked -- --watch-seconds 20 --gamepad 1
 ```
 
-On NixOS, `nix-shell -p stdenv.cc cmake pkg-config libxkbcommon udev` provides
-the build environment.
+On NixOS, `nix develop` enters the flake dev shell, which provides the build environment.
 
 SDL runs on the main thread with background gamepad acquisition enabled. Logs
 include SDL event timestamps, monotonic observation times, device identity and
